@@ -33,7 +33,7 @@ import {
 import { ensureSeedData } from "./seed";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
-import { getAdminPassword, getCronSecret, isMockMode } from "./config";
+import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -179,6 +179,7 @@ export interface SourceCapability {
 export function describeSourceCapability(
   ph: PlatformHealth,
   stats: PlatformStats | undefined,
+  opts: { youtubeKeySet?: boolean } = {},
 ): SourceCapability {
   const live = ph.sourceStatus === "live";
   if (!live) {
@@ -190,13 +191,29 @@ export function describeSourceCapability(
     };
   }
   const viewsUnavailable = stats !== undefined && stats.videoCount > 0 && stats.views === null;
+  // The source delivers comment COUNTS even when it can't pull comment text
+  // (e.g. Facebook posts scraper) — say so instead of "comments unavailable".
+  const commentCountsAvailable =
+    !ph.supportsComments && stats !== undefined && stats.comments != null;
   const gaps: string[] = [];
   if (viewsUnavailable) gaps.push("views unavailable");
-  if (!ph.supportsComments) gaps.push("comments unavailable");
+
+  let commentsPart = "";
+  if (ph.supportsComments) {
+    commentsPart = " + comments";
+  } else if (commentCountsAvailable) {
+    commentsPart = " + comment counts";
+  }
+  if (!ph.supportsComments) {
+    if (ph.platform === "youtube" && ph.providerType === "apify" && !opts.youtubeKeySet) {
+      gaps.push("add YouTube API key for comments");
+    } else if (!commentCountsAvailable) {
+      gaps.push("comments unavailable");
+    }
+  }
   if (!ph.supportsDiscovery) gaps.push("discovery unavailable");
 
-  let summary = viewsUnavailable ? "Live engagement" : "Live metrics";
-  if (ph.supportsComments) summary += " + comments";
+  let summary = (viewsUnavailable ? "Live engagement" : "Live metrics") + commentsPart;
   if (gaps.length > 0) summary += ` · ${gaps.join(" · ")}`;
   return { platform: ph.platform, summary, gaps, live: true };
 }
@@ -329,7 +346,9 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     trendIsSparse: isSparseTrend(trend),
     periodDelta,
     sourceCapabilities: health.platforms.map((ph) =>
-      describeSourceCapability(ph, platformStats.find((s) => s.platform === ph.platform)),
+      describeSourceCapability(ph, platformStats.find((s) => s.platform === ph.platform), {
+        youtubeKeySet: getYouTubeApiKey() !== null,
+      }),
     ),
     responseOpportunities,
     platformStats,

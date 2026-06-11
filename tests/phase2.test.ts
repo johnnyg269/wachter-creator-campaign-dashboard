@@ -55,24 +55,48 @@ describe("describeSourceCapability wording", () => {
     supportsDiscovery: true,
     ...over,
   });
-  const stats = (views: number | null): PlatformStats =>
-    ({ platform: "tiktok", videoCount: 2, views }) as PlatformStats;
+  const stats = (views: number | null, comments: number | null = null): PlatformStats =>
+    ({ platform: "tiktok", videoCount: 2, views, comments }) as PlatformStats;
 
   it("full-capability platform reads as live metrics + comments", () => {
-    expect(describeSourceCapability(ph({}), stats(5000)).summary).toBe("Live metrics + comments");
+    expect(describeSourceCapability(ph({}), stats(5000, 10)).summary).toBe(
+      "Live metrics + comments",
+    );
   });
-  it("no-comments platform names the gap", () => {
-    const c = describeSourceCapability(ph({ platform: "youtube", supportsComments: false }), stats(5000));
-    expect(c.summary).toBe("Live metrics · comments unavailable");
-    expect(c.gaps).toContain("comments unavailable");
+  it("YouTube via API key reads as live metrics + comments", () => {
+    const c = describeSourceCapability(
+      ph({ platform: "youtube", providerType: "youtube_api", supportsComments: true }),
+      stats(5000, 10),
+      { youtubeKeySet: true },
+    );
+    expect(c.summary).toBe("Live metrics + comments");
   });
-  it("views-unavailable platform reads as live engagement", () => {
+  it("YouTube via Apify without key suggests the API key, not a failure", () => {
+    const c = describeSourceCapability(
+      ph({ platform: "youtube", providerType: "apify", supportsComments: false }),
+      stats(5000, 10),
+      { youtubeKeySet: false },
+    );
+    expect(c.summary).toBe(
+      "Live metrics + comment counts · add YouTube API key for comments",
+    );
+    expect(c.summary).not.toContain("comments unavailable");
+  });
+  it("Facebook with comment counts only says so — never the generic label", () => {
     const c = describeSourceCapability(
       ph({ platform: "facebook", supportsComments: false }),
-      stats(null),
+      stats(null, 4),
     );
-    expect(c.summary).toContain("Live engagement");
+    expect(c.summary).toBe("Live engagement + comment counts · views unavailable");
+    expect(c.summary).not.toContain("comments unavailable");
     expect(c.gaps).toContain("views unavailable");
+  });
+  it("platform with neither views nor any comment data names both gaps", () => {
+    const c = describeSourceCapability(
+      ph({ platform: "facebook", supportsComments: false }),
+      stats(null, null),
+    );
+    expect(c.summary).toBe("Live engagement · views unavailable · comments unavailable");
   });
   it("disconnected platform surfaces the reason", () => {
     const c = describeSourceCapability(
