@@ -11,6 +11,7 @@ import { DeltaTag } from "@/components/ui/delta";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatDate, formatPct, truncate } from "@/lib/format";
 import { MetricValue } from "@/components/ui/metric-value";
+import { ExternalLink } from "lucide-react";
 
 function videoTitle(m: VideoMetrics): string {
   return m.video.title ?? m.video.caption ?? "Untitled video";
@@ -28,7 +29,7 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 function LeaderboardRow({ m, rank }: { m: VideoMetrics; rank: number }) {
   const title = videoTitle(m);
   return (
-    <li className="flex items-center gap-3 py-2.5">
+    <li className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-surface-hover/50">
       <span className="tabular w-5 shrink-0 text-right text-xs font-semibold text-muted-strong">
         {rank}
       </span>
@@ -78,6 +79,15 @@ function LeaderboardRow({ m, rank }: { m: VideoMetrics; rank: number }) {
           <DeltaTag value={m.delta24h?.value ?? null} label="24h" />
         </div>
       </div>
+      <a
+        href={m.video.originalUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open "${truncate(title, 60)}" on ${m.video.platform}`}
+        className="shrink-0 rounded-lg border border-border bg-surface p-1.5 text-muted-strong opacity-60 transition-all hover:border-border-strong hover:text-foreground group-hover:opacity-100"
+      >
+        <ExternalLink size={13} />
+      </a>
     </li>
   );
 }

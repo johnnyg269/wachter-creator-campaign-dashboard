@@ -77,11 +77,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Brand />
         <NavLinks />
         <div className="mt-auto px-3">
+          {/* Deliberately quiet — leadership viewers shouldn't be drawn here */}
           <Link
             href="/admin"
-            className="flex items-center gap-2 text-xs text-muted-strong hover:text-muted transition-colors"
+            className="flex items-center gap-1.5 text-[10px] text-muted-strong/60 transition-colors hover:text-muted"
           >
-            <Settings size={13} />
+            <Settings size={11} />
             Admin
           </Link>
         </div>

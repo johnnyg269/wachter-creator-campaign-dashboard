@@ -83,11 +83,12 @@ export function SourceStatusPanel({
                     Last refresh: <TimeAgo iso={p.lastSuccessfulRefreshAt} />
                   </div>
                   <div className="truncate">
+                    {/* Public-friendly source naming — technical detail lives in /admin */}
                     Source:{" "}
                     {p.providerType === "apify"
-                      ? `Apify actor ${p.actorId ?? "—"}`
+                      ? "Automated collection"
                       : p.providerType === "youtube_api"
-                        ? "YouTube Data API"
+                        ? "Official YouTube API"
                         : p.providerType === "mock"
                           ? "Demo data"
                           : `Manual (${PLATFORM_LABELS[p.platform]})`}

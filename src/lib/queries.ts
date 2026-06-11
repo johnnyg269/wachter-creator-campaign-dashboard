@@ -33,6 +33,7 @@ import {
   type VideoMetrics,
 } from "./metrics";
 import { computeCompleteness, type Completeness } from "./completeness";
+import { computeConfidence, computeInsights, type DataConfidence } from "./executive";
 import { ensureSeedData } from "./seed";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
@@ -231,6 +232,10 @@ export interface DashboardData {
   /** Gains across the selected range (first→last trend values). */
   periodDelta: { views: number | null; engagements: number | null; comments: number | null };
   sourceCapabilities: SourceCapability[];
+  /** Plain-English data-confidence summary for the hero badge. */
+  confidence: DataConfidence;
+  /** Computed insight lines for the hero ("TikTok is driving the most views"). */
+  insights: string[];
   platformStats: PlatformStats[];
   leaderboard: {
     mostViewed: VideoMetrics[];
@@ -353,6 +358,16 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
         youtubeKeySet: getYouTubeApiKey() !== null,
       }),
     ),
+    confidence: computeConfidence(all),
+    insights: computeInsights({
+      videosTracked: all.length,
+      platformsLive: health.platforms.filter((p) => p.sourceStatus === "live").length,
+      platformStats,
+      needsResponse: comments.filter((c) => c.needsResponse).length,
+      discoveryEnabled: health.platforms.some(
+        (p) => p.sourceStatus === "live" && p.supportsDiscovery,
+      ),
+    }),
     responseOpportunities,
     platformStats,
     leaderboard: {

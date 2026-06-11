@@ -18,6 +18,14 @@ Dark-mode, server-rendered, built for a leadership audience: every number shows 
 
 API routes: `POST /api/refresh` (manual refresh), `GET|POST /api/cron/refresh` (scheduled, secret-protected), `GET /api/status`, `POST /api/alerts/[id]/review`, `POST /api/videos/[id]/episode`.
 
+## Security
+
+**Use environment variables. Never commit secrets.** All credentials live in
+`.env.local` locally (gitignored) and Vercel environment variables in
+production. Run `npm run secrets:check` to scan tracked files for accidental
+secret values — it fails the moment a real token, password, or connection
+string lands in the repo.
+
 ## Quickstart
 
 ```bash

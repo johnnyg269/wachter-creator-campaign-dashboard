@@ -1,0 +1,43 @@
+# Scheduled campaign refresh — hits the production cron endpoint every
+# 10 minutes. Works on any plan (the schedule runs here, not on Vercel).
+#
+# Setup (after pushing this repo to GitHub):
+#   Repo → Settings → Secrets and variables → Actions:
+#     - Secret  CRON_SECRET : the same value as the Vercel CRON_SECRET env var
+#     - Variable APP_URL    : https://wachter-creator-campaign-dashboard.vercel.app
+#
+# The secret is read from GitHub Secrets at run time — never hardcode it.
+
+name: Refresh campaign data
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Trigger refresh
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET}" ] || [ -z "${APP_URL}" ]; then
+            echo "CRON_SECRET secret and APP_URL variable must be configured."
+            exit 1
+          fi
+          # The refresh can outlive the HTTP response (gateway timeout) and
+          # still complete server-side — treat 200 and timeout-ish statuses
+          # as success, but fail loudly on auth errors.
+          status=$(curl -s -o /tmp/resp.json -w "%{http_code}" -m 320 \
+            -X POST "${APP_URL}/api/cron/refresh" \
+            -H "Authorization: Bearer ${CRON_SECRET}") || status="timeout"
+          echo "HTTP ${status}"
+          if [ "${status}" = "401" ] || [ "${status}" = "400" ]; then
+            cat /tmp/resp.json || true
+            exit 1
+          fi
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL }}

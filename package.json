@@ -11,7 +11,9 @@
     "test:actors": "tsx scripts/test-actors.ts",
     "refresh": "tsx scripts/refresh.ts",
     "postinstall": "prisma generate",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "secrets:check": "bash scripts/secrets-check.sh",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

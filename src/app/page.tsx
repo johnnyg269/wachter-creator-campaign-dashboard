@@ -5,14 +5,13 @@ import clsx from "clsx";
 import Link from "next/link";
 import { getDashboardData, type TimeRange } from "@/lib/queries";
 import { PLATFORM_LABELS } from "@/lib/types";
-import { formatCompact, formatDate, formatDelta, formatNumber, formatPct, truncate } from "@/lib/format";
+import { formatCompact, formatDate, formatDelta, formatNumber, formatPct, timeAgo, truncate } from "@/lib/format";
 import { Card, CardBody, CardHeader, SectionTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { SourceStatusPanel } from "@/components/dashboard/source-status";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RefreshButton } from "@/components/ui/refresh-button";
-import { PageHeader } from "@/components/layout/page-header";
 import { DataNotice } from "@/components/layout/data-notice";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
@@ -79,6 +78,32 @@ function SystemsIndicator({
   );
 }
 
+function ConfidenceBadge({
+  confidence,
+}: {
+  confidence: import("@/lib/executive").DataConfidence;
+}) {
+  const tone =
+    confidence.level === "high"
+      ? { dot: "bg-positive", text: "text-positive" }
+      : confidence.level === "partial"
+        ? { dot: "bg-warning", text: "text-warning" }
+        : { dot: "bg-accent", text: "text-accent" };
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium whitespace-nowrap",
+        tone.text,
+      )}
+      title={`${confidence.detail}${confidence.verifiedAt ? ` Last verified ${timeAgo(confidence.verifiedAt)}.` : ""}`}
+      role="status"
+    >
+      <span className={clsx("h-2 w-2 rounded-full", tone.dot)} />
+      {confidence.headline}
+    </span>
+  );
+}
+
 function PeriodStat({
   label,
   value,
@@ -134,43 +159,45 @@ export default async function DashboardPage({
     <div>
       <DataNotice health={health} />
 
-      <PageHeader
-        title="Cybernick0x × Wachter Campaign"
-        subtitle={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>
-              {data.dateRange.from
-                ? `Campaign since ${formatDate(data.dateRange.from)}`
-                : "Start date pending first refresh"}
-            </span>
-            <span aria-hidden className="text-muted-strong">
-              ·
-            </span>
-            <span>
-              {lastRun ? (
-                <>
-                  Last refresh{" "}
+      {/* Executive hero — the 10-second story */}
+      <div className="mb-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">
+              Campaign performance
+            </div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight lg:text-[28px]">
+              Cybernick0x × Wachter
+            </h1>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+              <span>Cross-platform campaign tracker</span>
+              <span aria-hidden className="text-muted-strong">·</span>
+              <span>
+                {data.dateRange.from
+                  ? `Since ${formatDate(data.dateRange.from)}`
+                  : "Start date pending first refresh"}
+              </span>
+              <span aria-hidden className="text-muted-strong">·</span>
+              <span>
+                Last refreshed{" "}
+                <TimeAgo iso={lastRun ? (lastRun.finishedAt ?? lastRun.startedAt) : null} />
+                {lastRun && lastRun.status !== "success" && (
                   <span
                     className={clsx(
-                      "font-medium",
-                      lastRun.status === "success" && "text-positive",
+                      "ml-1 font-medium",
                       lastRun.status === "failed" && "text-negative",
                       lastRun.status === "partial" && "text-warning",
                       lastRun.status === "running" && "text-accent",
                     )}
                   >
-                    {lastRun.status}
-                  </span>{" "}
-                  <TimeAgo iso={lastRun.finishedAt ?? lastRun.startedAt} />
-                </>
-              ) : (
-                "No refresh runs yet"
-              )}
-            </span>
-          </span>
-        }
-        actions={
-          <>
+                    ({lastRun.status})
+                  </span>
+                )}
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <ConfidenceBadge confidence={data.confidence} />
             <SystemsIndicator
               liveCount={liveCount}
               total={health.platforms.length}
@@ -178,9 +205,23 @@ export default async function DashboardPage({
               hasGaps={hasGaps}
             />
             <RefreshButton />
-          </>
-        }
-      />
+          </div>
+        </div>
+
+        {data.insights.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {data.insights.map((line) => (
+              <span
+                key={line}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-[11px] text-foreground/85"
+              >
+                <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
+                {line}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Per-platform source status with expandable capability details */}
       <SourceStatusPanel platforms={health.platforms} capabilities={data.sourceCapabilities} />
@@ -313,10 +354,10 @@ export default async function DashboardPage({
               />
             ) : data.trendIsSparse ? (
               <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border bg-surface px-6 py-10 text-center">
-                <div className="text-sm font-medium text-muted">Tracking just started</div>
+                <div className="text-sm font-medium text-muted">Tracking history is building</div>
                 <div className="max-w-md text-xs text-muted-strong">
-                  Metrics are captured every refresh. More trend history will appear after the next
-                  few refreshes — the totals above are live now.
+                  Metrics are captured on every refresh — the totals above are live now, and the
+                  trend line fills in as history accumulates.
                 </div>
               </div>
             ) : (

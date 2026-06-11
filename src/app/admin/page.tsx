@@ -19,6 +19,7 @@ export const dynamic = "force-dynamic";
 
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
+  { id: "automation", label: "Refresh Automation" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
   { id: "content", label: "Tracked Content" },
@@ -147,7 +148,7 @@ export default async function AdminPage() {
               <ReadinessRow
                 ok={data.readiness.cronSecretSet}
                 label={`Cron: ${data.readiness.cronSecretSet ? "secret configured" : "CRON_SECRET missing"}`}
-                detail="vercel.json schedules /api/cron/refresh every 10 min (requires Vercel Pro; external scheduler works on Hobby)"
+                detail="Built-in daily cron (Hobby limit); 10-minute cadence via the Refresh Automation section below"
               />
               <ReadinessRow
                 ok={data.readiness.adminPasswordSet}
@@ -169,6 +170,101 @@ export default async function AdminPage() {
                 }`}
                 detail="Average of per-video field-completeness scores — details per video below"
               />
+            </CardBody>
+          </Card>
+        </section>
+
+        <section id="automation">
+          <Card>
+            <CardHeader
+              title="Refresh automation"
+              subtitle="The app is ready for 10-minute refreshes — schedule them from any external cron"
+            />
+            <CardBody className="space-y-4 text-xs">
+              {(() => {
+                const lastCron = data.refreshRuns.find((r) => r.trigger === "cron");
+                const lastManual = data.refreshRuns.find((r) => r.trigger !== "cron");
+                return (
+                  <div className="grid gap-2.5 sm:grid-cols-3">
+                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
+                        Last automated refresh
+                      </div>
+                      <div className="mt-1 font-medium">
+                        {lastCron ? (
+                          <>
+                            {lastCron.status} · <TimeAgo iso={lastCron.startedAt} />
+                          </>
+                        ) : (
+                          "none yet"
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
+                        Last manual refresh
+                      </div>
+                      <div className="mt-1 font-medium">
+                        {lastManual ? (
+                          <>
+                            {lastManual.status} · <TimeAgo iso={lastManual.startedAt} />
+                          </>
+                        ) : (
+                          "none yet"
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
+                        Built-in schedule
+                      </div>
+                      <div className="mt-1 font-medium">Daily 06:00 UTC (Vercel Hobby limit)</div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="rounded-lg border border-border bg-surface px-4 py-3">
+                <div className="font-medium">Endpoint</div>
+                <code className="mt-1 block break-all font-mono text-[11px] text-muted">
+                  POST https://wachter-creator-campaign-dashboard.vercel.app/api/cron/refresh
+                </code>
+                <div className="mt-2 font-medium">Required header</div>
+                <code className="mt-1 block font-mono text-[11px] text-muted">
+                  Authorization: Bearer &lt;CRON_SECRET&gt;
+                </code>
+                <p className="mt-1 text-[11px] text-muted-strong">
+                  Use the CRON_SECRET value from the Vercel environment variables — it is never
+                  displayed here. Recommended schedule: every 10 minutes (<code>*/10 * * * *</code>).
+                </p>
+              </div>
+
+              <details className="rounded-lg border border-border bg-surface px-4 py-3">
+                <summary className="cursor-pointer font-medium">
+                  Option A — cron-job.org (no code, ~2 minutes)
+                </summary>
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted">
+                  <li>Create a free account at cron-job.org → Create cronjob</li>
+                  <li>URL: the endpoint above · Method: POST · Schedule: every 10 minutes</li>
+                  <li>
+                    Advanced → Headers: add <code>Authorization</code> ={" "}
+                    <code>Bearer &lt;CRON_SECRET&gt;</code>
+                  </li>
+                  <li>Set request timeout to 300 seconds (refreshes take 2–4 minutes)</li>
+                </ol>
+              </details>
+
+              <details className="rounded-lg border border-border bg-surface px-4 py-3">
+                <summary className="cursor-pointer font-medium">
+                  Option B — GitHub Actions (already in the repo)
+                </summary>
+                <p className="mt-2 text-muted">
+                  <code>.github/workflows/refresh.yml</code> runs every 10 minutes once the repo is
+                  pushed to GitHub. Add repo secret <code>CRON_SECRET</code> and repo variable{" "}
+                  <code>APP_URL</code> under Settings → Secrets and variables → Actions. The secret
+                  stays in GitHub Secrets — never in the workflow file.
+                </p>
+              </details>
             </CardBody>
           </Card>
         </section>

@@ -105,6 +105,19 @@ function MiniStat({
   );
 }
 
+/** Plain-English reason a comment was flagged for response. */
+function flagReason(c: DashboardData["responseOpportunities"][number]): string {
+  const reasons: string[] = [];
+  if (c.sentiment === "question") reasons.push("asked a question");
+  if (c.sentiment === "negative") reasons.push("negative sentiment");
+  if (c.tags.includes("wachter")) reasons.push("mentions Wachter");
+  const recruiting = ["hiring", "job/career", "apply", "bootcamp", "apprenticeship"];
+  if (c.tags.some((t) => recruiting.includes(t))) reasons.push("recruiting interest");
+  if (reasons.length === 0) reasons.push("worth a look");
+  const joined = reasons.join(" · ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
 export function CommentIntelCard({
   commentStats,
   recentComments,
@@ -123,8 +136,8 @@ export function CommentIntelCard({
   return (
     <Card>
       <CardHeader
-        title="Comment intelligence"
-        subtitle="Audience signal across all platforms"
+        title="Audience signals"
+        subtitle="What viewers are saying across all platforms"
         action={
           <Link
             href="/comments"
@@ -196,11 +209,24 @@ export function CommentIntelCard({
                       <p className="mt-0.5 text-xs leading-relaxed text-foreground/90">
                         {truncate(c.text, 120)}
                       </p>
-                      {c.video && (
-                        <p className="mt-0.5 truncate text-[10px] text-muted-strong">
-                          on “{truncate(c.video.title ?? c.video.caption ?? "Untitled", 60)}”
-                        </p>
-                      )}
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 truncate text-[10px] text-muted-strong">
+                        <span className="font-medium text-warning/90">{flagReason(c)}</span>
+                        {c.video && (
+                          <span>
+                            on “{truncate(c.video.title ?? c.video.caption ?? "Untitled", 50)}”
+                          </span>
+                        )}
+                        {(c.permalink ?? c.video?.originalUrl) && (
+                          <a
+                            href={c.permalink ?? c.video?.originalUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-accent hover:underline"
+                          >
+                            open →
+                          </a>
+                        )}
+                      </p>
                     </li>
                   ))}
                 </ul>
