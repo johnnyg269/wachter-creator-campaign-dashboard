@@ -483,9 +483,14 @@ export class PrismaStore implements Store {
   ): Promise<{ comment: Comment; created: boolean }> {
     // JsonStore semantics: only overwrite likes/replyCount when the new value
     // is non-null (counts move over time; null means "platform didn't say").
+    // Derived fields (tags/sentiment/needsResponse) always refresh so tagging
+    // rule changes propagate on re-ingestion.
     const refresh = {
       likes: c.likes ?? undefined,
       replyCount: c.replyCount ?? undefined,
+      tags: c.tags,
+      sentiment: c.sentiment,
+      needsResponse: c.needsResponse,
     };
     const createData: Prisma.CommentUncheckedCreateInput = {
       id: c.id ?? undefined,

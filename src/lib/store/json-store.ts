@@ -273,9 +273,13 @@ export class JsonStore implements Store {
       return false;
     });
     if (existing) {
-      // Refresh mutable fields (like counts move over time)
+      // Refresh mutable + derived fields (like counts move over time; tag and
+      // sentiment rules evolve and should propagate on re-ingestion).
       existing.likes = c.likes ?? existing.likes;
       existing.replyCount = c.replyCount ?? existing.replyCount;
+      existing.tags = c.tags;
+      existing.sentiment = c.sentiment;
+      existing.needsResponse = c.needsResponse;
       await this.persist();
       return { comment: existing, created: false };
     }

@@ -6,7 +6,8 @@ export interface KeywordRule {
 }
 
 export const KEYWORD_RULES: KeywordRule[] = [
-  { tag: "wachter", pattern: /\bwachter\b/i },
+  // Audiences misspell the company constantly — "watcher", "wachter", etc.
+  { tag: "wachter", pattern: /\bwa(?:ch|tch|cht)er\b/i },
   { tag: "bootcamp", pattern: /\bboot\s?camps?\b/i },
   { tag: "low voltage", pattern: /\blow[\s-]?volt(age)?\b|\blo[\s-]?vo\b/i },
   { tag: "training", pattern: /\btrain(ing|ed|s)?\b|\blearn(ing)?\b/i },
@@ -22,6 +23,11 @@ export const KEYWORD_RULES: KeywordRule[] = [
   { tag: "apprenticeship", pattern: /\bapprentice(ship)?s?\b/i },
   { tag: "union/non-union", pattern: /\b(non[\s-]?)?union\b/i },
   { tag: "travel", pattern: /\btravel(ing|s)?\b|\bon the road\b|\bper diem\b/i },
+  // High-signal recruiting/intent phrases
+  { tag: "apply", pattern: /\b(how|where) (do|can|did) (i|you) (apply|sign\s?up|get in|join)\b|\bapply(ing)?\b|\bsign\s?up\b/i },
+  { tag: "help request", pattern: /\bcan (you|someone) help( me)?\b|\bhelp me (get|find|start)\b/i },
+  { tag: "location", pattern: /\bwhere is (this|that|it)\b|\bwhere (are you|is the)\b|\bwhat (city|state|location)\b/i },
+  { tag: "company", pattern: /\bwhat company\b|\bwhat('?s| is) (the |this )?company\b|\bwho (do you work for|is the company)\b|\bcompany name\b/i },
 ];
 
 export function tagComment(text: string): string[] {

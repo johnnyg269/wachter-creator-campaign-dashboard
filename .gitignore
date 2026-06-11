@@ -43,3 +43,4 @@ next-env.d.ts
 # local JSON store
 /data/
 !.env.example
+!.env.production.example

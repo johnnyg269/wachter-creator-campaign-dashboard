@@ -130,6 +130,7 @@ export interface TrendPoint {
   t: string;
   views: number | null;
   engagements: number | null;
+  comments: number | null;
 }
 
 /**
@@ -154,6 +155,7 @@ export function aggregateTrend(
     const t = new Date(from.getTime() + (span * i) / buckets).toISOString();
     let views: number | null = null;
     let eng: number | null = null;
+    let comments: number | null = null;
     for (const snaps of sortedByVideo.values()) {
       let last: MetricSnapshot | null = null;
       for (const s of snaps) {
@@ -162,12 +164,24 @@ export function aggregateTrend(
       }
       if (!last) continue;
       if (last.views !== null) views = (views ?? 0) + last.views;
+      if (last.comments !== null) comments = (comments ?? 0) + last.comments;
       const e = engagements(last);
       if (e !== null) eng = (eng ?? 0) + e;
     }
-    points.push({ t, views, engagements: eng });
+    points.push({ t, views, engagements: eng, comments });
   }
   return points;
+}
+
+/**
+ * True when there isn't enough history for a meaningful trend line —
+ * fewer than 3 buckets with data, or all values identical (flat line).
+ */
+export function isSparseTrend(points: TrendPoint[]): boolean {
+  const withData = points.filter((p) => p.views !== null);
+  if (withData.length < 3) return true;
+  const values = new Set(withData.map((p) => p.views));
+  return values.size < 2;
 }
 
 /** Compact per-video rollup used by leaderboards and tables. */

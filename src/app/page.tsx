@@ -4,11 +4,11 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { getDashboardData, type TimeRange } from "@/lib/queries";
+import { PLATFORM_LABELS } from "@/lib/types";
 import { formatCompact, formatDate, formatDelta, formatNumber, formatPct, truncate } from "@/lib/format";
 import { Card, CardBody, CardHeader, SectionTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { PlatformBadge } from "@/components/ui/platform";
-import { StatusPill } from "@/components/ui/status";
+import { SourceStatusPanel } from "@/components/dashboard/source-status";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RefreshButton } from "@/components/ui/refresh-button";
@@ -35,32 +35,75 @@ function parseRange(value: string | string[] | undefined): TimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "7d";
 }
 
+/**
+ * Honest connection status: counts connected sources and flags metric gaps —
+ * never claims "all systems live" while known fields are unavailable.
+ */
 function SystemsIndicator({
   liveCount,
   total,
   anyFailed,
+  hasGaps,
 }: {
   liveCount: number;
   total: number;
   anyFailed: boolean;
+  hasGaps: boolean;
 }) {
-  const allLive = total > 0 && liveCount === total;
   const tone = anyFailed
-    ? { dot: "bg-negative", text: "text-negative", label: `Refresh failed (${liveCount}/${total} live)` }
-    : allLive
-      ? { dot: "bg-positive", text: "text-positive", label: "All systems live" }
-      : { dot: "bg-warning", text: "text-warning", label: `Partially connected (${liveCount}/${total} live)` };
+    ? { dot: "bg-negative", text: "text-negative", label: `Refresh issues · ${liveCount}/${total} connected` }
+    : liveCount === total && total > 0
+      ? { dot: "bg-positive", text: "text-positive", label: `${total} data sources connected` }
+      : { dot: "bg-warning", text: "text-warning", label: `${liveCount}/${total} data sources connected` };
   return (
-    <span
-      className={clsx(
-        "inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium whitespace-nowrap",
-        tone.text,
+    <span className="flex flex-wrap items-center justify-end gap-1.5">
+      <span
+        className={clsx(
+          "inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium whitespace-nowrap",
+          tone.text,
+        )}
+        role="status"
+      >
+        <span className={clsx("h-2 w-2 rounded-full", tone.dot, !anyFailed && liveCount > 0 && "animate-pulse")} />
+        {tone.label}
+      </span>
+      {hasGaps && !anyFailed && (
+        <span
+          className="inline-flex items-center rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] text-muted whitespace-nowrap"
+          title="Some platforms don't expose every metric — see Data sources below for details"
+        >
+          Some metrics unavailable
+        </span>
       )}
-      role="status"
-    >
-      <span className={clsx("h-2 w-2 rounded-full", tone.dot, allLive && !anyFailed && "animate-pulse")} />
-      {tone.label}
     </span>
+  );
+}
+
+function PeriodStat({
+  label,
+  value,
+  sub,
+  positive,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  positive?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-strong">{label}</div>
+      <div
+        className={clsx(
+          "tabular mt-0.5 truncate text-sm font-semibold",
+          positive ? "text-positive" : "text-foreground",
+        )}
+        title={value}
+      >
+        {value}
+      </div>
+      {sub && <div className="tabular text-[10px] text-muted">{sub}</div>}
+    </div>
   );
 }
 
@@ -76,6 +119,7 @@ export default async function DashboardPage({
 
   const liveCount = health.platforms.filter((p) => p.sourceStatus === "live").length;
   const anyFailed = health.platforms.some((p) => p.sourceStatus === "refresh_failed");
+  const hasGaps = data.sourceCapabilities.some((c) => c.live && c.gaps.length > 0);
   const lastRun = health.lastRun;
   const updatedAt = lastRun?.finishedAt ?? null;
   const trendHasData = data.trend.some((p) => p.views !== null);
@@ -129,24 +173,15 @@ export default async function DashboardPage({
               liveCount={liveCount}
               total={health.platforms.length}
               anyFailed={anyFailed}
+              hasGaps={hasGaps}
             />
             <RefreshButton />
           </>
         }
       />
 
-      {/* Per-platform connection status */}
-      <div className="mb-6 flex flex-wrap gap-2">
-        {health.platforms.map((p) => (
-          <div
-            key={p.platform}
-            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5"
-          >
-            <PlatformBadge platform={p.platform} size="sm" />
-            <StatusPill status={p.sourceStatus} detail={p.statusDetail} size="sm" />
-          </div>
-        ))}
-      </div>
+      {/* Per-platform source status with expandable capability details */}
+      <SourceStatusPanel platforms={health.platforms} capabilities={data.sourceCapabilities} />
 
       <div className="space-y-6">
         {/* KPI grid */}
@@ -154,12 +189,16 @@ export default async function DashboardPage({
           <KpiCard
             label="Total views"
             value={kpis.totalViews !== null ? formatCompact(kpis.totalViews) : null}
+            delta={kpis.viewsGained24h}
+            deltaLabel="24h"
             unavailableReason="No connected source yet"
             updatedAt={updatedAt}
           />
           <KpiCard
             label="Total engagements"
             value={kpis.totalEngagements !== null ? formatCompact(kpis.totalEngagements) : null}
+            delta={data.periodDelta.engagements}
+            deltaLabel="this period"
             unavailableReason="No connected source yet"
             updatedAt={updatedAt}
           />
@@ -221,29 +260,65 @@ export default async function DashboardPage({
         <Card>
           <CardHeader
             title="Performance trend"
-            subtitle={`Cumulative views & engagements · ${RANGE_LABELS[range]}`}
+            subtitle={`Tracked totals over real snapshots · ${RANGE_LABELS[range]}`}
             action={<RangeSwitcher active={range} />}
           />
           <CardBody>
-            {trendHasData ? (
-              <>
-                <div className="mb-2 flex items-center gap-4 text-[11px] text-muted">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#3b82f6]" />
-                    Views
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#34d399]" />
-                    Engagements
-                  </span>
-                </div>
-                <TrendChart data={data.trend} showEngagements />
-              </>
-            ) : (
+            {trendHasData && (
+              <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+                <PeriodStat
+                  label="Views gained"
+                  value={data.periodDelta.views !== null ? formatDelta(data.periodDelta.views) : "—"}
+                  positive={(data.periodDelta.views ?? 0) > 0}
+                />
+                <PeriodStat
+                  label="Engagements gained"
+                  value={
+                    data.periodDelta.engagements !== null
+                      ? formatDelta(data.periodDelta.engagements)
+                      : "—"
+                  }
+                  positive={(data.periodDelta.engagements ?? 0) > 0}
+                />
+                <PeriodStat
+                  label="Best platform today"
+                  value={
+                    momentum.bestPlatformToday
+                      ? `${PLATFORM_LABELS[momentum.bestPlatformToday.platform]}`
+                      : "—"
+                  }
+                  sub={
+                    momentum.bestPlatformToday
+                      ? `${formatDelta(momentum.bestPlatformToday.gained)} views`
+                      : undefined
+                  }
+                />
+                <PeriodStat
+                  label="Fastest-growing video"
+                  value={fastestTitle ? truncate(fastestTitle, 26) : "—"}
+                  sub={
+                    kpis.fastestGrowing
+                      ? `${formatDelta(kpis.fastestGrowing.gained24h)} views`
+                      : undefined
+                  }
+                />
+              </div>
+            )}
+            {!trendHasData ? (
               <EmptyState
                 title="Waiting for first refresh"
                 detail="The trend line draws itself as snapshots accumulate. Connect a provider and run a refresh to start capturing data."
               />
+            ) : data.trendIsSparse ? (
+              <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border bg-surface px-6 py-10 text-center">
+                <div className="text-sm font-medium text-muted">Tracking just started</div>
+                <div className="max-w-md text-xs text-muted-strong">
+                  Metrics are captured every refresh. More trend history will appear after the next
+                  few refreshes — the totals above are live now.
+                </div>
+              </div>
+            ) : (
+              <TrendChart data={data.trend} />
             )}
           </CardBody>
         </Card>
@@ -280,7 +355,11 @@ export default async function DashboardPage({
         {/* Momentum + comment intelligence */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <MomentumCard momentum={momentum} />
-          <CommentIntelCard commentStats={commentStats} recentComments={data.recentComments} />
+          <CommentIntelCard
+            commentStats={commentStats}
+            recentComments={data.recentComments}
+            responseOpportunities={data.responseOpportunities}
+          />
         </div>
 
         {/* Alerts preview */}

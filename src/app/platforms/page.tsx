@@ -125,7 +125,7 @@ function PlatformCard({
               <TrendingUp size={11} style={{ color: PLATFORM_HEX[s.platform] }} />
               Views · last 7 days
             </div>
-            <TrendChart data={trend} height={120} />
+            <TrendChart data={trend} height={120} mini />
           </div>
         )}
 

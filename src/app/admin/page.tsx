@@ -18,12 +18,44 @@ import { ContentManager } from "./content-manager";
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
+  { id: "readiness", label: "Production Readiness" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
   { id: "content", label: "Tracked Content" },
   { id: "logs", label: "Refresh Logs" },
   { id: "overrides", label: "Override Log" },
 ];
+
+function ReadinessRow({
+  ok,
+  label,
+  detail,
+  warnOnly,
+}: {
+  ok: boolean;
+  label: string;
+  detail: string;
+  /** Render a soft warning instead of a hard red when not ok. */
+  warnOnly?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5">
+      <span
+        className={
+          ok
+            ? "mt-0.5 h-2 w-2 shrink-0 rounded-full bg-positive"
+            : warnOnly
+              ? "mt-0.5 h-2 w-2 shrink-0 rounded-full bg-warning"
+              : "mt-0.5 h-2 w-2 shrink-0 rounded-full bg-negative"
+        }
+      />
+      <div className="min-w-0 text-xs">
+        <div className="font-medium">{label}</div>
+        <div className="mt-0.5 text-[11px] text-muted">{detail}</div>
+      </div>
+    </div>
+  );
+}
 
 export default async function AdminPage() {
   const authed = await isAdminAuthenticated();
@@ -66,6 +98,70 @@ export default async function AdminPage() {
       </nav>
 
       <div className="space-y-10">
+        <section id="readiness">
+          <Card>
+            <CardHeader
+              title="Production readiness"
+              subtitle="Everything the deployed version needs before sharing the URL"
+            />
+            <CardBody className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+              <ReadinessRow
+                ok={data.readiness.databaseConnected}
+                label={`Database: ${data.readiness.databaseConnected ? "Supabase/Postgres connected" : "not connected"}`}
+                detail={
+                  data.readiness.databaseConnected
+                    ? data.health.store.detail
+                    : `Storage mode: ${data.health.store.detail}. Set DATABASE_URL for durable history before sharing broadly.`
+                }
+              />
+              <ReadinessRow
+                ok={Boolean(data.tokenStatus.configured && data.tokenStatus.valid)}
+                label={`Apify token: ${
+                  !data.tokenStatus.configured ? "missing" : data.tokenStatus.valid ? "connected" : "invalid"
+                }`}
+                detail={
+                  data.tokenStatus.valid
+                    ? `Account ${data.tokenStatus.username ?? "verified"} — token never displayed`
+                    : "Set APIFY_TOKEN in env vars"
+                }
+              />
+              <ReadinessRow
+                ok={(Object.values(data.readiness.actorIds) as Array<string | null>).every(Boolean)}
+                label={`Actor IDs: ${
+                  (Object.values(data.readiness.actorIds) as Array<string | null>).filter(Boolean).length
+                }/4 configured`}
+                detail={(["tiktok", "instagram", "facebook", "youtube"] as const)
+                  .map((p) => `${p}: ${data.readiness.actorIds[p] ? "✓" : "—"}`)
+                  .join("  ")}
+              />
+              <ReadinessRow
+                ok={Boolean(data.health.lastRun && data.health.lastRun.status !== "failed")}
+                label={`Last refresh: ${data.health.lastRun ? data.health.lastRun.status : "never run"}`}
+                detail={
+                  data.health.lastRun
+                    ? `${formatDateTime(data.health.lastRun.startedAt)} · ${data.health.lastRun.videosUpdated} videos, ${data.health.lastRun.commentsUpdated} comments`
+                    : "Run a refresh to validate the full pipeline"
+                }
+              />
+              <ReadinessRow
+                ok={data.readiness.cronSecretSet}
+                label={`Cron: ${data.readiness.cronSecretSet ? "secret configured" : "CRON_SECRET missing"}`}
+                detail="vercel.json schedules /api/cron/refresh every 10 min (requires Vercel Pro; external scheduler works on Hobby)"
+              />
+              <ReadinessRow
+                ok={data.readiness.adminPasswordSet}
+                warnOnly
+                label={`Admin password: ${data.readiness.adminPasswordSet ? "enabled" : "not set"}`}
+                detail={
+                  data.readiness.adminPasswordSet
+                    ? "/admin requires sign-in"
+                    : "Set ADMIN_PASSWORD before sharing the deployment"
+                }
+              />
+            </CardBody>
+          </Card>
+        </section>
+
         <section id="campaign">
           <CampaignSettings campaign={data.campaign} storeInfo={data.health.store} />
         </section>

@@ -108,13 +108,17 @@ function MiniStat({
 export function CommentIntelCard({
   commentStats,
   recentComments,
+  responseOpportunities = [],
 }: {
   commentStats: DashboardData["commentStats"];
   recentComments: DashboardData["recentComments"];
+  responseOpportunities?: DashboardData["responseOpportunities"];
 }) {
+  const opportunityIds = new Set(responseOpportunities.map((c) => c.id));
   const newest = [...recentComments]
+    .filter((c) => !opportunityIds.has(c.id))
     .sort((a, b) => (b.postedAt ?? b.capturedAt).localeCompare(a.postedAt ?? a.capturedAt))
-    .slice(0, 5);
+    .slice(0, 3);
 
   return (
     <Card>
@@ -142,10 +146,10 @@ export function CommentIntelCard({
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <MiniStat label="Total" value={commentStats.total} />
-              <MiniStat label="Questions" value={commentStats.questions} />
-              <MiniStat label="Mention Wachter" value={commentStats.mentionsWachter} />
+              <MiniStat label="Questions to answer" value={commentStats.questions} />
               <MiniStat label="Need response" value={commentStats.needsResponse} highlight />
+              <MiniStat label="Positive reactions" value={commentStats.positive} />
+              <MiniStat label="Recruiting interest" value={commentStats.recruitingInterest} />
             </div>
 
             <SentimentBar
@@ -155,33 +159,71 @@ export function CommentIntelCard({
             />
 
             {commentStats.topTags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {commentStats.topTags.map((t) => (
-                  <span
-                    key={t.tag}
-                    className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] text-muted"
-                  >
-                    #{t.tag} <span className="tabular text-muted-strong">{t.count}</span>
-                  </span>
-                ))}
+              <div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-strong">
+                  Top audience themes
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {commentStats.topTags.map((t) => (
+                    <span
+                      key={t.tag}
+                      className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] text-muted"
+                    >
+                      #{t.tag} <span className="tabular text-muted-strong">{t.count}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 
-            <ul className="divide-y divide-border border-t border-border">
-              {newest.map((c) => (
-                <li key={c.id} className="py-2.5">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-strong">
-                    <PlatformDot platform={c.platform} />
-                    <span className="font-medium text-muted">{c.authorName ?? "Unknown"}</span>
-                    <TimeAgo iso={c.postedAt ?? c.capturedAt} />
-                    {c.sentiment && <SentimentChip sentiment={c.sentiment} />}
-                  </div>
-                  <p className="mt-1 text-xs leading-relaxed text-foreground/90">
-                    {truncate(c.text, 140)}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            {responseOpportunities.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                  Response opportunities
+                </div>
+                <ul className="space-y-1.5">
+                  {responseOpportunities.slice(0, 3).map((c) => (
+                    <li
+                      key={c.id}
+                      className="rounded-lg border-l-2 border-warning/70 bg-[rgba(251,191,36,0.05)] px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-strong">
+                        <PlatformDot platform={c.platform} />
+                        <span className="font-medium text-muted">{c.authorName ?? "Unknown"}</span>
+                        <TimeAgo iso={c.postedAt ?? c.capturedAt} />
+                        {c.sentiment && <SentimentChip sentiment={c.sentiment} />}
+                      </div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-foreground/90">
+                        {truncate(c.text, 120)}
+                      </p>
+                      {c.video && (
+                        <p className="mt-0.5 truncate text-[10px] text-muted-strong">
+                          on “{truncate(c.video.title ?? c.video.caption ?? "Untitled", 60)}”
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {newest.length > 0 && (
+              <ul className="divide-y divide-border border-t border-border">
+                {newest.map((c) => (
+                  <li key={c.id} className="py-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-strong">
+                      <PlatformDot platform={c.platform} />
+                      <span className="font-medium text-muted">{c.authorName ?? "Unknown"}</span>
+                      <TimeAgo iso={c.postedAt ?? c.capturedAt} />
+                      {c.sentiment && <SentimentChip sentiment={c.sentiment} />}
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-foreground/90">
+                      {truncate(c.text, 140)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </CardBody>

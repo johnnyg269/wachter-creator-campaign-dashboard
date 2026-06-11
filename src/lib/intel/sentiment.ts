@@ -34,7 +34,7 @@ export function classifyComment(text: string, tags: string[] = []): SentimentRes
   // A comment deserves a human response when it's a question, when it's
   // negative (reputation), or when it asks about jobs/hiring around Wachter.
   const hiringIntent = tags.some((tag) =>
-    ["hiring", "job/career", "bootcamp", "apprenticeship", "pay", "wachter"].includes(tag),
+    ["hiring", "job/career", "bootcamp", "apprenticeship", "pay", "wachter", "apply", "help request"].includes(tag),
   );
   const needsResponse = isQuestion || sentiment === "negative" || (hiringIntent && t.length > 15);
 

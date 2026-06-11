@@ -25,6 +25,7 @@ import {
   aggregateTrend,
   computeVideoMetrics,
   deltaOverWindow,
+  isSparseTrend,
   sumNullable,
   type TrendPoint,
   type VideoMetrics,
@@ -32,7 +33,7 @@ import {
 import { ensureSeedData } from "./seed";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
-import { isMockMode } from "./config";
+import { getAdminPassword, getCronSecret, isMockMode } from "./config";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -43,6 +44,8 @@ export interface PlatformHealth {
   statusDetail: string | null;
   lastSuccessfulRefreshAt: string | null;
   actorId: string | null;
+  supportsComments: boolean;
+  supportsDiscovery: boolean;
 }
 
 export interface HealthSummary {
@@ -70,6 +73,8 @@ export async function getHealth(): Promise<HealthSummary> {
       statusDetail: r.readiness.detail,
       lastSuccessfulRefreshAt: r.config?.lastSuccessfulRefreshAt ?? null,
       actorId: r.provider.providerType === "apify" ? (r.config?.actorId ?? null) : null,
+      supportsComments: r.provider.supportsComments,
+      supportsDiscovery: r.provider.supportsDiscovery,
     };
   });
   return {
@@ -161,11 +166,51 @@ export interface MomentumData {
   commentsPerHour: number | null;
 }
 
+/** Per-platform "what are we actually getting" line for the source panel. */
+export interface SourceCapability {
+  platform: Platform;
+  /** e.g. "Live metrics + comments", "Live engagement · views unavailable" */
+  summary: string;
+  /** Specific gaps, e.g. ["views unavailable", "comments unavailable"] */
+  gaps: string[];
+  live: boolean;
+}
+
+export function describeSourceCapability(
+  ph: PlatformHealth,
+  stats: PlatformStats | undefined,
+): SourceCapability {
+  const live = ph.sourceStatus === "live";
+  if (!live) {
+    return {
+      platform: ph.platform,
+      summary: ph.statusDetail ?? "Not connected",
+      gaps: ["not connected"],
+      live: false,
+    };
+  }
+  const viewsUnavailable = stats !== undefined && stats.videoCount > 0 && stats.views === null;
+  const gaps: string[] = [];
+  if (viewsUnavailable) gaps.push("views unavailable");
+  if (!ph.supportsComments) gaps.push("comments unavailable");
+  if (!ph.supportsDiscovery) gaps.push("discovery unavailable");
+
+  let summary = viewsUnavailable ? "Live engagement" : "Live metrics";
+  if (ph.supportsComments) summary += " + comments";
+  if (gaps.length > 0) summary += ` · ${gaps.join(" · ")}`;
+  return { platform: ph.platform, summary, gaps, live: true };
+}
+
 export interface DashboardData {
   campaign: Campaign;
   health: HealthSummary;
   kpis: Kpis;
   trend: TrendPoint[];
+  /** True when there's too little history for a meaningful line chart. */
+  trendIsSparse: boolean;
+  /** Gains across the selected range (first→last trend values). */
+  periodDelta: { views: number | null; engagements: number | null; comments: number | null };
+  sourceCapabilities: SourceCapability[];
   platformStats: PlatformStats[];
   leaderboard: {
     mostViewed: VideoMetrics[];
@@ -176,11 +221,13 @@ export interface DashboardData {
   };
   momentum: MomentumData;
   recentComments: Array<Comment & { video: Video | null }>;
+  responseOpportunities: Array<Comment & { video: Video | null }>;
   commentStats: {
     total: number;
     questions: number;
     mentionsWachter: number;
     needsResponse: number;
+    recruitingInterest: number;
     positive: number;
     neutral: number;
     negative: number;
@@ -214,8 +261,37 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
   const earliest = [...snapshotsByVideo.values()]
     .flat()
     .reduce<string | null>((min, s) => (min === null || s.capturedAt < min ? s.capturedAt : min), null);
-  const from = ms ? new Date(now.getTime() - ms) : earliest ? new Date(earliest) : new Date(now.getTime() - DAY_MS);
-  const trend = aggregateTrend(snapshotsByVideo, from, now, Math.min(48, Math.max(12, ms ? Math.round(ms / (30 * 60 * 1000)) : 48)));
+  // Clamp the window to real snapshot history (minus a small lead-in) so the
+  // chart never opens with days of empty dead space before tracking began.
+  const requestedFrom = ms ? new Date(now.getTime() - ms) : earliest ? new Date(earliest) : new Date(now.getTime() - DAY_MS);
+  const earliestFrom = earliest
+    ? new Date(new Date(earliest).getTime() - 15 * 60 * 1000)
+    : requestedFrom;
+  const from = requestedFrom > earliestFrom ? requestedFrom : earliestFrom;
+  const spanMs = now.getTime() - from.getTime();
+  const trend = aggregateTrend(
+    snapshotsByVideo,
+    from,
+    now,
+    Math.min(48, Math.max(12, Math.round(spanMs / (30 * 60 * 1000)))),
+  );
+  const trendWithData = trend.filter((p) => p.views !== null);
+  const firstPoint = trendWithData[0] ?? null;
+  const lastPoint = trendWithData[trendWithData.length - 1] ?? null;
+  const periodDelta = {
+    views:
+      firstPoint?.views != null && lastPoint?.views != null && firstPoint !== lastPoint
+        ? lastPoint.views - firstPoint.views
+        : null,
+    engagements:
+      firstPoint?.engagements != null && lastPoint?.engagements != null && firstPoint !== lastPoint
+        ? lastPoint.engagements - firstPoint.engagements
+        : null,
+    comments:
+      firstPoint?.comments != null && lastPoint?.comments != null && firstPoint !== lastPoint
+        ? lastPoint.comments - firstPoint.comments
+        : null,
+  };
 
   const sortBy = (fn: (m: VideoMetrics) => number | null) =>
     [...all].sort((a, b) => (fn(b) ?? -1) - (fn(a) ?? -1));
@@ -236,11 +312,26 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     .map((c) => c.postedAt ?? c.capturedAt)
     .filter((t) => new Date(t).getTime() > now.getTime() - DAY_MS);
 
+  const RECRUITING_TAGS = new Set(["hiring", "job/career", "apply", "bootcamp", "apprenticeship"]);
+  const recruitingInterest = comments.filter((c) =>
+    c.tags.some((t) => RECRUITING_TAGS.has(t)),
+  ).length;
+  const responseOpportunities = comments
+    .filter((c) => c.needsResponse)
+    .slice(0, 5)
+    .map((c) => ({ ...c, video: videoById.get(c.videoId) ?? null }));
+
   return {
     campaign,
     health,
     kpis: { ...kpis, fastestGrowing },
     trend,
+    trendIsSparse: isSparseTrend(trend),
+    periodDelta,
+    sourceCapabilities: health.platforms.map((ph) =>
+      describeSourceCapability(ph, platformStats.find((s) => s.platform === ph.platform)),
+    ),
+    responseOpportunities,
     platformStats,
     leaderboard: {
       mostViewed: sortBy((m) => m.latest?.views ?? null).slice(0, 10),
@@ -273,6 +364,7 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
       questions: comments.filter((c) => c.sentiment === "question").length,
       mentionsWachter: comments.filter((c) => c.tags.includes("wachter")).length,
       needsResponse: comments.filter((c) => c.needsResponse).length,
+      recruitingInterest,
       positive: comments.filter((c) => c.sentiment === "positive").length,
       neutral: comments.filter((c) => c.sentiment === "neutral").length,
       negative: comments.filter((c) => c.sentiment === "negative").length,
@@ -549,15 +641,28 @@ export interface AdminPageData {
   providerConfigs: ProviderConfig[];
   tokenStatus: ApifyTokenStatus;
   overrides: Awaited<ReturnType<ReturnType<typeof getStore>["listOverrides"]>>;
+  /** Production-readiness booleans (never the secret values themselves). */
+  readiness: {
+    databaseConnected: boolean;
+    cronSecretSet: boolean;
+    adminPasswordSet: boolean;
+    actorIds: Record<Platform, string | null>;
+  };
 }
 
 export async function getAdminPageData(): Promise<AdminPageData> {
   const store = getStore();
   const data = await loadCampaignData(true);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
+  const health = await getHealth();
+  const actorIds = { tiktok: null, instagram: null, facebook: null, youtube: null } as Record<
+    Platform,
+    string | null
+  >;
+  for (const p of health.platforms) actorIds[p.platform] = p.actorId;
   return {
     campaign: data.campaign,
-    health: await getHealth(),
+    health,
     profiles: data.profiles,
     videos: data.videos.map((v) => ({
       ...v,
@@ -568,6 +673,12 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     providerConfigs: await store.listProviderConfigs(),
     tokenStatus: await checkToken(),
     overrides: await store.listOverrides(30),
+    readiness: {
+      databaseConnected: health.store.kind === "postgres",
+      cronSecretSet: getCronSecret() !== null,
+      adminPasswordSet: getAdminPassword() !== null,
+      actorIds,
+    },
   };
 }
 

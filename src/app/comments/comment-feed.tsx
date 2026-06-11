@@ -523,7 +523,13 @@ function CommentCard({
     c.likes !== null || c.replyCount !== null || c.tags.length > 0 || c.episodeName !== null;
 
   return (
-    <Card className="px-4 py-3.5">
+    <Card
+      className={clsx(
+        "px-4 py-3.5",
+        c.needsResponse && "border-l-2 border-l-warning/70 bg-[rgba(251,191,36,0.03)]",
+        !c.needsResponse && c.sentiment === "question" && "border-l-2 border-l-accent/60",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <PlatformDot platform={c.platform} />
