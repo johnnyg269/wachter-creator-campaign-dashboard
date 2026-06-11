@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { ExternalLink, Eye, EyeOff, Plus } from "lucide-react";
 import type { EpisodeGroup, Platform, PlatformProfile, Video } from "@/lib/types";
+import type { Completeness } from "@/lib/completeness";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PlatformBadge } from "@/components/ui/platform";
 import { StatusPill } from "@/components/ui/status";
@@ -41,12 +42,14 @@ export function ContentManager({
   profiles,
   seedVideos,
   seedProfiles,
+  completeness = {},
 }: {
   videos: AdminVideo[];
   episodes: EpisodeGroup[];
   profiles: PlatformProfile[];
   seedVideos: SeedUrl[];
   seedProfiles: SeedUrl[];
+  completeness?: Record<string, Completeness>;
 }) {
   const router = useRouter();
   const [newUrl, setNewUrl] = useState("");
@@ -183,6 +186,7 @@ export function ContentManager({
                 <th className="py-1.5 pr-3 font-medium">Video</th>
                 <th className="py-1.5 pr-3 font-medium">Episode</th>
                 <th className="py-1.5 pr-3 font-medium">Status</th>
+                <th className="py-1.5 pr-3 font-medium">Data</th>
                 <th className="py-1.5 pr-3 font-medium">Refreshed</th>
                 <th className="py-1.5 font-medium">Visible</th>
               </tr>
@@ -273,6 +277,29 @@ export function ContentManager({
                   </td>
                   <td className="py-2 pr-3">
                     <StatusPill status={v.sourceStatus} size="sm" />
+                  </td>
+                  <td className="py-2 pr-3">
+                    {completeness[v.id] ? (
+                      <span
+                        className={clsx(
+                          "tabular text-[11px] font-medium",
+                          completeness[v.id].score >= 80
+                            ? "text-positive"
+                            : completeness[v.id].score >= 50
+                              ? "text-warning"
+                              : "text-negative",
+                        )}
+                        title={
+                          completeness[v.id].missingFields.length > 0
+                            ? `Missing: ${completeness[v.id].missingFields.join(", ")}`
+                            : "All expected fields present"
+                        }
+                      >
+                        {completeness[v.id].score}%
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-muted-strong">—</span>
+                    )}
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap text-muted">
                     <TimeAgo iso={v.lastRefreshedAt} />

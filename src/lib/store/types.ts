@@ -5,6 +5,7 @@ import type {
   Alert,
   AlertStatus,
   Campaign,
+  CollectionAttempt,
   Comment,
   EpisodeGroup,
   ManualOverride,
@@ -88,6 +89,10 @@ export interface Store {
   // Manual overrides (audit log)
   addOverride(o: Omit<ManualOverride, "id" | "createdAt"> & { id?: string }): Promise<ManualOverride>;
   listOverrides(limit?: number): Promise<ManualOverride[]>;
+
+  // Collection attempts (provider attempt log)
+  addCollectionAttempt(a: Omit<CollectionAttempt, "id"> & { id?: string }): Promise<CollectionAttempt>;
+  listCollectionAttempts(limit?: number, platform?: Platform): Promise<CollectionAttempt[]>;
 
   // Provider configs
   listProviderConfigs(): Promise<ProviderConfig[]>;

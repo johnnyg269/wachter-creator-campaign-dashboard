@@ -18,6 +18,7 @@ import type { Store } from "./store/types";
 import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
 import { ApifyProvider } from "./providers/apify-provider";
+import { mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
 import { engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
@@ -65,7 +66,7 @@ async function doRefresh(trigger: "manual" | "cron" | "script"): Promise<Refresh
   };
 
   for (const platform of PLATFORMS) {
-    const platformReport = await refreshPlatform(store, campaign, platform, log);
+    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id);
     report.platforms.push(platformReport);
     if (platformReport.status === "failed" && platformReport.reason) {
       report.errors.push(`${platform}: ${platformReport.reason}`);
@@ -111,6 +112,7 @@ async function refreshPlatform(
   campaign: Campaign,
   platform: Platform,
   log: string[],
+  refreshRunId: string,
 ): Promise<RefreshReport["platforms"][number]> {
   const out: RefreshReport["platforms"][number] = {
     platform,
@@ -150,12 +152,16 @@ async function refreshPlatform(
   const since = effectiveStartDate(campaign);
 
   try {
-    let fetched: { videos: NormalizedVideo[]; commentsByVideo: Record<string, NormalizedComment[]> };
+    let fetched: {
+      videos: NormalizedVideo[];
+      commentsByVideo: Record<string, NormalizedComment[]>;
+      attempts: import("./providers/types").AttemptDraft[];
+    };
     if (provider.fetchPlatform) {
       fetched = await provider.fetchPlatform(profile, videos, since);
     } else {
       // Per-video fallback path for providers without a batch implementation.
-      fetched = { videos: [], commentsByVideo: {} };
+      fetched = { videos: [], commentsByVideo: {}, attempts: [] };
       for (const v of videos) {
         const n = await provider.getVideoMetrics(v);
         if (n) fetched.videos.push(n);
@@ -172,9 +178,51 @@ async function refreshPlatform(
       }
     }
 
+    // Persist the attempt log (success and failure alike) so admin can see
+    // exactly which sources were tried.
+    for (const a of fetched.attempts) {
+      await store.addCollectionAttempt({
+        refreshRunId,
+        platform,
+        provider: a.provider,
+        actorId: a.actorId,
+        kind: a.kind,
+        inputDescription: a.inputDescription,
+        success: a.success,
+        runId: a.runId,
+        itemCount: a.itemCount,
+        error: a.error,
+        capturedAt: new Date().toISOString(),
+      });
+    }
+
     const capturedAt = new Date().toISOString();
 
+    // Group fetched records by the tracked video they resolve to and merge —
+    // one snapshot per video per refresh, never a views-less duplicate
+    // clobbering a surface that did expose views.
+    const groups = new Map<string, { merged: NormalizedVideo; commentKeys: Set<string> }>();
     for (const n of fetched.videos) {
+      const existing = await store.findVideoByUrlOrExternalId(
+        platform,
+        n.originalUrl,
+        n.externalVideoId,
+      );
+      const gkey = existing ? `v:${existing.id}` : `n:${n.externalVideoId ?? n.originalUrl}`;
+      const commentKey = n.externalVideoId ?? n.originalUrl ?? "";
+      const group = groups.get(gkey);
+      if (!group) {
+        groups.set(gkey, { merged: n, commentKeys: new Set([commentKey]) });
+      } else {
+        group.merged =
+          metricCompleteness(n) > metricCompleteness(group.merged)
+            ? mergeNormalizedVideos(n, group.merged)
+            : mergeNormalizedVideos(group.merged, n);
+        group.commentKeys.add(commentKey);
+      }
+    }
+
+    for (const { merged: n, commentKeys } of groups.values()) {
       const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out);
       if (!video) continue;
 
@@ -192,8 +240,7 @@ async function refreshPlatform(
       });
       out.videosUpdated++;
 
-      const key = n.externalVideoId ?? n.originalUrl ?? "";
-      const comments = fetched.commentsByVideo[key] ?? [];
+      const comments = [...commentKeys].flatMap((k) => fetched.commentsByVideo[k] ?? []);
       for (const c of comments) {
         const tags = tagComment(c.text);
         const cls = classifyComment(c.text, tags);
@@ -327,7 +374,7 @@ async function upsertFetchedVideo(
     firstTrackedAt: now,
     lastRefreshedAt: now,
     status: "active",
-    episodeGroupId: null,
+    episodeGroupId: await inferEpisodeGroup(store, platform, n),
     sourceStatus: "live",
     errorMessage: null,
     hidden: false,
@@ -337,4 +384,30 @@ async function upsertFetchedVideo(
   out.newVideosDiscovered++;
   await emitNewVideoAlert(store, campaign, created);
   return created;
+}
+
+/** Normalized caption prefix used to match the same concept across platforms. */
+function captionKey(text: string | null): string | null {
+  if (!text) return null;
+  const key = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 40);
+  return key.length >= 12 ? key : null;
+}
+
+/**
+ * Auto-assign an episode when the same concept already exists on another
+ * platform (creators cross-post the same caption): copy its episode label.
+ */
+async function inferEpisodeGroup(
+  store: Store,
+  platform: Platform,
+  n: NormalizedVideo,
+): Promise<string | null> {
+  const key = captionKey(n.caption ?? n.title);
+  if (!key) return null;
+  const all = await store.listVideos({ includeHidden: true });
+  for (const v of all) {
+    if (v.platform === platform || !v.episodeGroupId) continue;
+    if (captionKey(v.caption ?? v.title) === key) return v.episodeGroupId;
+  }
+  return null;
 }

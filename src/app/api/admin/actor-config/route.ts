@@ -15,9 +15,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const body = await readJsonObject(req);
   if (!body) return badRequest("Invalid JSON body");
   if (!isPlatform(body.platform)) return badRequest("Unknown platform");
+  const backupActorId = asTrimmedString(body.backupActorId);
+  const clearBackup = body.backupActorId === null || body.backupActorId === "";
   const actorId = asTrimmedString(body.actorId);
-  if (!actorId) return badRequest("actorId is required");
-  if (!/^[\w~/.-]+$/.test(actorId)) return badRequest("actorId has an unexpected format");
+  // Backup-only updates are allowed (primary stays as-is).
+  if (!actorId && !backupActorId && !clearBackup) return badRequest("actorId is required");
+  if (actorId && !/^[\w~/.-]+$/.test(actorId)) return badRequest("actorId has an unexpected format");
+  if (backupActorId && !/^[\w~/.-]+$/.test(backupActorId)) {
+    return badRequest("backupActorId has an unexpected format");
+  }
 
   let inputOverride: unknown = undefined;
   if (body.inputOverride !== undefined && body.inputOverride !== null && body.inputOverride !== "") {
@@ -35,11 +41,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const store = getStore();
     const existing = await store.getProviderConfig(body.platform);
-    const actorChanged = existing?.actorId !== actorId;
+    const effectiveActorId = actorId ?? existing?.actorId ?? null;
+    const actorChanged = actorId !== null && existing?.actorId !== actorId;
     const config = await store.upsertProviderConfig({
       platform: body.platform,
       providerType: "apify",
-      actorId,
+      actorId: effectiveActorId,
+      backupActorId: clearBackup ? null : (backupActorId ?? existing?.backupActorId ?? null),
       // A new actor must be re-tested before we trust prior capability flags.
       status: actorChanged ? "untested" : (existing?.status ?? "untested"),
       lastTestedAt: actorChanged ? null : (existing?.lastTestedAt ?? null),

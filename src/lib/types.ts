@@ -228,11 +228,34 @@ export interface ActorTestResult {
   durationMs: number | null;
 }
 
+/**
+ * One data-collection attempt (an actor run / API sweep), logged so admin can
+ * see exactly which sources were tried and why a metric might be missing.
+ */
+export interface CollectionAttempt {
+  id: string;
+  refreshRunId: string | null;
+  platform: Platform;
+  provider: ProviderType;
+  actorId: string | null;
+  /** discover | videos | backup | comments */
+  kind: string;
+  inputDescription: string;
+  success: boolean;
+  /** Apify run ID when applicable. */
+  runId: string | null;
+  itemCount: number;
+  error: string | null;
+  capturedAt: string;
+}
+
 export interface ProviderConfig {
   id: string;
   platform: Platform;
   providerType: ProviderType;
   actorId: string | null;
+  /** Optional backup actor, run only when the primary leaves gaps. */
+  backupActorId?: string | null;
   status: ProviderStatusValue;
   lastTestedAt: string | null;
   lastTestResult: ActorTestResult | null;

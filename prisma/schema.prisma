@@ -182,11 +182,30 @@ model ManualOverride {
   @@index([entityType, entityId])
 }
 
+model CollectionAttempt {
+  id               String   @id @default(uuid())
+  refreshRunId     String?
+  platform         String
+  provider         String
+  actorId          String?
+  kind             String
+  inputDescription String
+  success          Boolean
+  runId            String?
+  itemCount        Int      @default(0)
+  error            String?
+  capturedAt       DateTime
+
+  @@index([capturedAt])
+  @@index([platform, capturedAt])
+}
+
 model ProviderConfig {
   id                      String    @id @default(uuid())
   platform                String    @unique
   providerType            String
   actorId                 String?
+  backupActorId           String?
   status                  String    @default("untested")
   lastTestedAt            DateTime?
   lastTestResult          Json?

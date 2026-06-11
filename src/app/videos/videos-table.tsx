@@ -28,6 +28,7 @@ import { PLATFORM_COLORS, PlatformBadge } from "@/components/ui/platform";
 import { StatusPill } from "@/components/ui/status";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { VideoThumb } from "@/components/ui/video-thumb";
+import { MetricValue } from "@/components/ui/metric-value";
 
 export type VideoRow = VideoMetrics & {
   episodeName: string | null;
@@ -51,13 +52,13 @@ const SORT_KEYS = Object.keys(SORT_LABELS) as SortKey[];
 function sortValue(row: VideoRow, key: SortKey): number | null {
   switch (key) {
     case "views":
-      return row.latest?.views ?? null;
+      return row.confirmed.views?.value ?? null;
     case "growth24h":
       return row.delta24h?.value ?? null;
     case "engagementRate":
       return row.engagementRate;
     case "comments":
-      return row.latest?.comments ?? null;
+      return row.confirmed.comments?.value ?? null;
     case "publishedAt": {
       if (!row.video.publishedAt) return null;
       const t = Date.parse(row.video.publishedAt);
@@ -548,7 +549,7 @@ export function VideosTable({ rows, episodes }: { rows: VideoRow[]; episodes: Ep
                           </div>
                         </td>
                         <td className="tabular border-b border-border px-3 py-3 text-right font-semibold">
-                          {formatCompact(row.latest?.views ?? null)}
+                          <MetricValue confirmed={row.confirmed.views} hasAnySnapshot={row.latest !== null} />
                         </td>
                         <td className="border-b border-border px-3 py-3 text-right">
                           <Growth24h delta={row.delta24h} />
@@ -560,13 +561,13 @@ export function VideosTable({ rows, episodes }: { rows: VideoRow[]; episodes: Ep
                           {formatPct(row.engagementRate)}
                         </td>
                         <td className="tabular border-b border-border px-3 py-3 text-right text-muted">
-                          {formatCompact(row.latest?.likes ?? null)}
+                          <MetricValue confirmed={row.confirmed.likes} hasAnySnapshot={row.latest !== null} />
                         </td>
                         <td className="tabular border-b border-border px-3 py-3 text-right text-muted">
-                          {formatCompact(row.latest?.comments ?? null)}
+                          <MetricValue confirmed={row.confirmed.comments} hasAnySnapshot={row.latest !== null} />
                         </td>
                         <td className="tabular border-b border-border px-3 py-3 text-right text-muted">
-                          {formatCompact(row.latest?.shares ?? null)}
+                          <MetricValue confirmed={row.confirmed.shares} hasAnySnapshot={row.latest !== null} />
                         </td>
                         <td className="tabular border-b border-border px-3 py-3 text-right text-muted">
                           {formatCompact(saves)}
@@ -656,16 +657,16 @@ export function VideosTable({ rows, episodes }: { rows: VideoRow[]; episodes: Ep
                   </div>
 
                   <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4">
-                    <MetricTile label="Views">{formatCompact(row.latest?.views ?? null)}</MetricTile>
+                    <MetricTile label="Views"><MetricValue confirmed={row.confirmed.views} hasAnySnapshot={row.latest !== null} /></MetricTile>
                     <MetricTile label="24h">
                       <Growth24h delta={row.delta24h} />
                     </MetricTile>
                     <MetricTile label="ER">{formatPct(row.engagementRate)}</MetricTile>
-                    <MetricTile label="Likes">{formatCompact(row.latest?.likes ?? null)}</MetricTile>
+                    <MetricTile label="Likes"><MetricValue confirmed={row.confirmed.likes} hasAnySnapshot={row.latest !== null} /></MetricTile>
                     <MetricTile label="Comments">
-                      {formatCompact(row.latest?.comments ?? null)}
+                      <MetricValue confirmed={row.confirmed.comments} hasAnySnapshot={row.latest !== null} />
                     </MetricTile>
-                    <MetricTile label="Shares">{formatCompact(row.latest?.shares ?? null)}</MetricTile>
+                    <MetricTile label="Shares"><MetricValue confirmed={row.confirmed.shares} hasAnySnapshot={row.latest !== null} /></MetricTile>
                     <MetricTile label="Saves">{formatCompact(saves)}</MetricTile>
                     <MetricTile label="Since tracked">
                       <DeltaTag value={row.growthSinceTracked} className="text-[13px]" />

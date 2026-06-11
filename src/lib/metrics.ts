@@ -184,10 +184,28 @@ export function isSparseTrend(points: TrendPoint[]): boolean {
   return values.size < 2;
 }
 
+/**
+ * Last-confirmed value for one metric: the newest snapshot where the source
+ * actually reported it. `stale` means a newer snapshot exists without it —
+ * display as "N · last confirmed X ago", never as a fresh reading.
+ */
+export interface ConfirmedValue {
+  value: number;
+  at: string;
+  stale: boolean;
+}
+
+export type ConfirmedMetrics = Record<
+  "views" | "likes" | "comments" | "shares",
+  ConfirmedValue | null
+>;
+
 /** Compact per-video rollup used by leaderboards and tables. */
 export interface VideoMetrics {
   video: Video;
   latest: MetricSnapshot | null;
+  /** Last-confirmed values per metric (survives a missing-this-refresh gap). */
+  confirmed: ConfirmedMetrics;
   engagements: number | null;
   engagementRate: number | null;
   delta24h: Delta | null;
@@ -196,17 +214,37 @@ export interface VideoMetrics {
   growthSinceTracked: number | null;
 }
 
+function lastConfirmed(
+  sorted: MetricSnapshot[],
+  field: "views" | "likes" | "comments" | "shares",
+): ConfirmedValue | null {
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const v = sorted[i][field];
+    if (v !== null) {
+      return { value: v, at: sorted[i].capturedAt, stale: i < sorted.length - 1 };
+    }
+  }
+  return null;
+}
+
 export function computeVideoMetrics(
   video: Video,
   snaps: MetricSnapshot[],
   now: Date = new Date(),
 ): VideoMetrics {
   const latest = latestSnapshot(snaps);
-  const sorted = sortSnapshots(snaps).filter((s) => s.views !== null);
+  const allSorted = sortSnapshots(snaps);
+  const sorted = allSorted.filter((s) => s.views !== null);
   const first = sorted.length > 0 ? sorted[0] : null;
   return {
     video,
     latest,
+    confirmed: {
+      views: lastConfirmed(allSorted, "views"),
+      likes: lastConfirmed(allSorted, "likes"),
+      comments: lastConfirmed(allSorted, "comments"),
+      shares: lastConfirmed(allSorted, "shares"),
+    },
     engagements: latest ? engagements(latest) : null,
     engagementRate: latest ? engagementRate(latest) : null,
     delta24h: deltaOverWindow(snaps, DAY_MS, "views", now),
@@ -217,4 +255,15 @@ export function computeVideoMetrics(
         ? latest.views - first.views
         : null,
   };
+}
+
+/**
+ * Ranking by views for leaderboards: only videos with a confirmed (current or
+ * last-confirmed) view count compete; never-confirmed videos are excluded
+ * rather than ranked at 0.
+ */
+export function rankByConfirmedViews(list: VideoMetrics[]): VideoMetrics[] {
+  return list
+    .filter((m) => m.confirmed.views !== null)
+    .sort((a, b) => (b.confirmed.views?.value ?? 0) - (a.confirmed.views?.value ?? 0));
 }

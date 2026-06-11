@@ -100,6 +100,15 @@ export function parseVideoUrl(url: string): ParsedVideoUrl | null {
   if (watch && /^\d+$/.test(watch)) {
     return { platform, handle: null, externalVideoId: watch, canonicalUrl: url };
   }
+  // Share links: facebook.com/share/r/<slug>/ (reels) or /share/v/<slug>/
+  const share = path.match(/\/share\/[rv]\/([\w-]+)/);
+  if (share) {
+    return { platform, handle: null, externalVideoId: share[1], canonicalUrl: url };
+  }
+  const videosPath = path.match(/\/videos\/(\d+)/);
+  if (videosPath) {
+    return { platform, handle: null, externalVideoId: videosPath[1], canonicalUrl: url };
+  }
   return { platform, handle: null, externalVideoId: null, canonicalUrl: url };
 }
 

@@ -20,11 +20,26 @@ export interface ProviderReadiness {
   detail: string | null;
 }
 
+/** One collection attempt (an actor run / API sweep) for the attempt log. */
+export interface AttemptDraft {
+  provider: ProviderType;
+  actorId: string | null;
+  /** discover | videos | backup */
+  kind: string;
+  inputDescription: string;
+  success: boolean;
+  runId: string | null;
+  itemCount: number;
+  error: string | null;
+}
+
 /** Batch result for one platform refresh (one actor run / API sweep). */
 export interface PlatformFetchResult {
   videos: NormalizedVideo[];
   /** Keyed by externalVideoId (preferred) or originalUrl. */
   commentsByVideo: Record<string, NormalizedComment[]>;
+  /** Every collection attempt made during this fetch, success or failure. */
+  attempts: AttemptDraft[];
 }
 
 export interface SocialPlatformProvider {

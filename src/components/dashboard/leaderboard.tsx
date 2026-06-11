@@ -9,13 +9,14 @@ import { VideoThumb } from "@/components/ui/video-thumb";
 import { PlatformBadge } from "@/components/ui/platform";
 import { DeltaTag } from "@/components/ui/delta";
 import { EmptyState } from "@/components/ui/empty-state";
-import { formatCompact, formatDate, formatPct, truncate } from "@/lib/format";
+import { formatDate, formatPct, truncate } from "@/lib/format";
+import { MetricValue } from "@/components/ui/metric-value";
 
 function videoTitle(m: VideoMetrics): string {
   return m.video.title ?? m.video.caption ?? "Untitled video";
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="w-16 text-right">
       <div className="tabular text-sm font-medium">{value}</div>
@@ -54,15 +55,24 @@ function LeaderboardRow({ m, rank }: { m: VideoMetrics; rank: number }) {
           </span>
           {/* Compact metrics shown only on small screens */}
           <span className="tabular text-[11px] text-muted md:hidden">
-            {formatCompact(m.latest?.views ?? null)} views
+            <MetricValue confirmed={m.confirmed.views} hasAnySnapshot={m.latest !== null} /> views
           </span>
           <DeltaTag value={m.delta24h?.value ?? null} label="24h" className="md:hidden" />
         </div>
       </div>
       <div className="hidden shrink-0 items-center gap-4 md:flex">
-        <Metric label="Views" value={formatCompact(m.latest?.views ?? null)} />
-        <Metric label="Likes" value={formatCompact(m.latest?.likes ?? null)} />
-        <Metric label="Comments" value={formatCompact(m.latest?.comments ?? null)} />
+        <Metric
+          label="Views"
+          value={<MetricValue confirmed={m.confirmed.views} hasAnySnapshot={m.latest !== null} />}
+        />
+        <Metric
+          label="Likes"
+          value={<MetricValue confirmed={m.confirmed.likes} hasAnySnapshot={m.latest !== null} />}
+        />
+        <Metric
+          label="Comments"
+          value={<MetricValue confirmed={m.confirmed.comments} hasAnySnapshot={m.latest !== null} />}
+        />
         <Metric label="ER" value={formatPct(m.engagementRate)} />
         <div className="w-16 text-right">
           <DeltaTag value={m.delta24h?.value ?? null} label="24h" />

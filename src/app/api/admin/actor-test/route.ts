@@ -38,7 +38,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       testUrl: asTrimmedString(body.testUrl) ?? undefined,
       inputOverride,
       store: getStore(),
-      save: true,
+      // dryRun (e.g. testing a BACKUP actor) must not overwrite the primary
+      // provider config.
+      save: body.dryRun !== true,
     });
     return NextResponse.json({ ok: true, result });
   } catch (e) {

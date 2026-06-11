@@ -22,6 +22,7 @@ const SECTIONS = [
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
   { id: "content", label: "Tracked Content" },
+  { id: "attempts", label: "Collection Attempts" },
   { id: "logs", label: "Refresh Logs" },
   { id: "overrides", label: "Override Log" },
 ];
@@ -158,6 +159,16 @@ export default async function AdminPage() {
                     : "Set ADMIN_PASSWORD before sharing the deployment"
                 }
               />
+              <ReadinessRow
+                ok={(data.readiness.avgCompleteness ?? 0) >= 70}
+                warnOnly
+                label={`Data completeness: ${
+                  data.readiness.avgCompleteness !== null
+                    ? `${data.readiness.avgCompleteness}% avg`
+                    : "no data yet"
+                }`}
+                detail="Average of per-video field-completeness scores — details per video below"
+              />
             </CardBody>
           </Card>
         </section>
@@ -190,7 +201,77 @@ export default async function AdminPage() {
             profiles={data.profiles}
             seedVideos={SEED_VIDEOS}
             seedProfiles={SEED_PROFILES}
+            completeness={data.completeness}
           />
+        </section>
+
+        <section id="attempts">
+          <Card>
+            <CardHeader
+              title="Collection attempts"
+              subtitle="Every source tried per refresh — success and failure alike"
+            />
+            <CardBody>
+              {data.attempts.length === 0 ? (
+                <p className="text-xs text-muted">
+                  No attempts logged yet — they appear from the next refresh onward.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-xs">
+                    <thead className="text-muted-strong">
+                      <tr>
+                        <th className="py-1.5 pr-3 font-medium">When</th>
+                        <th className="py-1.5 pr-3 font-medium">Platform</th>
+                        <th className="py-1.5 pr-3 font-medium">Source</th>
+                        <th className="py-1.5 pr-3 font-medium">Kind</th>
+                        <th className="py-1.5 pr-3 font-medium">Input</th>
+                        <th className="py-1.5 pr-3 font-medium">Items</th>
+                        <th className="py-1.5 font-medium">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {data.attempts.map((a) => (
+                        <tr key={a.id}>
+                          <td className="py-2 pr-3 whitespace-nowrap text-muted">
+                            <TimeAgo iso={a.capturedAt} />
+                          </td>
+                          <td className="py-2 pr-3">{a.platform}</td>
+                          <td className="max-w-44 truncate py-2 pr-3 font-mono text-[10px] text-muted" title={a.actorId ?? a.provider}>
+                            {a.provider === "apify" ? (a.actorId ?? "apify") : a.provider}
+                          </td>
+                          <td className="py-2 pr-3">
+                            <span
+                              className={
+                                a.kind === "backup"
+                                  ? "rounded bg-[rgba(251,191,36,0.1)] px-1.5 py-0.5 text-[10px] font-medium text-warning"
+                                  : "text-muted"
+                              }
+                            >
+                              {a.kind}
+                            </span>
+                          </td>
+                          <td className="max-w-56 truncate py-2 pr-3 text-muted" title={a.inputDescription}>
+                            {a.inputDescription}
+                          </td>
+                          <td className="tabular py-2 pr-3">{a.itemCount}</td>
+                          <td className="py-2">
+                            {a.success ? (
+                              <span className="text-positive">ok</span>
+                            ) : (
+                              <span className="text-negative" title={a.error ?? undefined}>
+                                failed{a.runId ? ` (run ${a.runId.slice(0, 8)}…)` : ""}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardBody>
+          </Card>
         </section>
 
         <section id="logs">

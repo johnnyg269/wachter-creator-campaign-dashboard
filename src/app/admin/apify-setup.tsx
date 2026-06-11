@@ -65,6 +65,13 @@ export function ApifySetup({
     }
     return init;
   });
+  const [backupInputs, setBackupInputs] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const p of PLATFORMS) {
+      init[p] = providerConfigs.find((c) => c.platform === p)?.backupActorId ?? "";
+    }
+    return init;
+  });
   const [overrideInputs, setOverrideInputs] = useState<Record<string, string>>({});
   const [showOverride, setShowOverride] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<Record<string, "save" | "test" | null>>({});
@@ -104,8 +111,27 @@ export function ApifySetup({
     }
   }
 
-  async function runTest(platform: Platform) {
-    const actorId = actorInputs[platform]?.trim();
+  async function saveBackup(platform: Platform) {
+    setBusyFor(platform, "save");
+    setErrors((e) => ({ ...e, [platform]: null }));
+    try {
+      const res = await fetch("/api/admin/actor-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform, backupActorId: backupInputs[platform]?.trim() ?? "" }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) setErrors((e) => ({ ...e, [platform]: data.error ?? "Save failed" }));
+      else router.refresh();
+    } catch {
+      setErrors((e) => ({ ...e, [platform]: "Request failed" }));
+    } finally {
+      setBusyFor(platform, null);
+    }
+  }
+
+  async function runTest(platform: Platform, useBackup = false) {
+    const actorId = (useBackup ? backupInputs[platform] : actorInputs[platform])?.trim();
     if (!actorId) return;
     setBusyFor(platform, "test");
     setErrors((e) => ({ ...e, [platform]: null }));
@@ -117,7 +143,8 @@ export function ApifySetup({
         body: JSON.stringify({
           platform,
           actorId,
-          inputOverride: overrideInputs[platform]?.trim() || undefined,
+          dryRun: useBackup, // backup tests must not overwrite the primary config
+          inputOverride: useBackup ? undefined : overrideInputs[platform]?.trim() || undefined,
         }),
       });
       const data = (await res.json()) as { ok: boolean; error?: string; result?: ActorTestResult };
@@ -279,6 +306,38 @@ export function ApifySetup({
                 <p className="text-muted-strong">
                   Test target: <span className="break-all font-mono text-[10px]">{testUrl}</span>
                 </p>
+
+                <div>
+                  <label className="mb-1 block text-muted" htmlFor={`backup-${platform}`}>
+                    Backup actor{" "}
+                    <span className="text-muted-strong">
+                      (runs only when the primary leaves gaps, e.g. missing views)
+                    </span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id={`backup-${platform}`}
+                      value={backupInputs[platform] ?? ""}
+                      onChange={(e) => setBackupInputs((b) => ({ ...b, [platform]: e.target.value }))}
+                      placeholder="optional backup actor ID"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 font-mono text-[11px] outline-none focus:border-accent"
+                    />
+                    <button
+                      onClick={() => saveBackup(platform)}
+                      disabled={Boolean(busy[platform])}
+                      className="rounded-lg border border-border bg-surface-raised px-3 py-1.5 font-medium hover:bg-surface-hover disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => runTest(platform, true)}
+                      disabled={Boolean(busy[platform]) || !backupInputs[platform]?.trim()}
+                      className="rounded-lg border border-border bg-surface-raised px-3 py-1.5 font-medium hover:bg-surface-hover disabled:opacity-50"
+                    >
+                      Test backup
+                    </button>
+                  </div>
+                </div>
 
                 <button
                   onClick={() => setShowOverride((s) => ({ ...s, [platform]: !s[platform] }))}

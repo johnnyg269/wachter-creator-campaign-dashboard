@@ -2,8 +2,8 @@
 // One instance per platform; the actor ID comes from the runtime
 // ProviderConfig (admin-set) or the APIFY_<PLATFORM>_ACTOR_ID env var.
 
-import { getActorIdFromEnv, getApifyToken } from "../config";
-import { normalizeCommentItem } from "../apify/normalize";
+import { getActorIdFromEnv, getApifyToken, getBackupActorIdFromEnv } from "../config";
+import { mergeNormalizedVideos, metricCompleteness, normalizeCommentItem } from "../apify/normalize";
 import type {
   NormalizedComment,
   NormalizedVideo,
@@ -20,6 +20,7 @@ import {
   normalizeVideoItem,
 } from "../apify/normalize";
 import type {
+  AttemptDraft,
   PlatformFetchResult,
   ProviderReadiness,
   SocialPlatformProvider,
@@ -45,6 +46,10 @@ export class ApifyProvider implements SocialPlatformProvider {
 
   actorId(): string | null {
     return this.config?.actorId?.trim() || getActorIdFromEnv(this.platform);
+  }
+
+  backupActorId(): string | null {
+    return this.config?.backupActorId?.trim() || getBackupActorIdFromEnv(this.platform);
   }
 
   readiness(): ProviderReadiness {
@@ -75,7 +80,11 @@ export class ApifyProvider implements SocialPlatformProvider {
     return { ready: true, status: this.config?.status ?? "untested", sourceStatus: "live", detail: null };
   }
 
-  private async run(
+  /**
+   * Run the actor, trying each input-format candidate (bounded), recording an
+   * AttemptDraft per try into `attempts` when provided.
+   */
+  private async runWithMeta(
     kind: "videos" | "discover",
     ctx: {
       videoUrls?: string[];
@@ -83,28 +92,58 @@ export class ApifyProvider implements SocialPlatformProvider {
       sinceIso?: string;
       limit?: number;
     },
+    opts: { actorId?: string; attemptKind?: string; attempts?: AttemptDraft[] } = {},
   ): Promise<Array<Record<string, unknown>>> {
-    const actorId = this.actorId();
+    const actorId = opts.actorId ?? this.actorId();
     if (!actorId) throw new Error(`No Apify actor configured for ${this.platform}`);
     const candidates = buildInputCandidates(this.platform, actorId, kind, {
       ...ctx,
       commentsPerPost: this.supportsComments ? 15 : undefined,
-      override: this.config?.inputOverride ?? undefined,
+      // The admin input override applies to the primary actor only.
+      override: opts.actorId ? undefined : (this.config?.inputOverride ?? undefined),
     });
     if (candidates.length === 0) {
       throw new Error(`Could not build actor input for ${this.platform} (${kind})`);
     }
+    const record = (a: Omit<AttemptDraft, "provider" | "actorId" | "kind">) =>
+      opts.attempts?.push({
+        provider: "apify",
+        actorId,
+        kind: opts.attemptKind ?? kind,
+        ...a,
+      });
     let lastError: unknown = null;
     for (const candidate of candidates.slice(0, MAX_INPUT_ATTEMPTS)) {
       try {
         const result = await runActor({ actorId, input: candidate.input });
+        record({
+          inputDescription: candidate.description,
+          success: result.items.length > 0,
+          runId: result.runId,
+          itemCount: result.items.length,
+          error: result.items.length === 0 ? "Actor returned 0 items" : null,
+        });
         if (result.items.length > 0) return result.items;
         lastError = new Error(`Actor returned 0 items (input: ${candidate.description})`);
       } catch (e) {
+        record({
+          inputDescription: candidate.description,
+          success: false,
+          runId: null,
+          itemCount: 0,
+          error: e instanceof Error ? e.message.slice(0, 300) : String(e),
+        });
         lastError = e;
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private run(
+    kind: "videos" | "discover",
+    ctx: { videoUrls?: string[]; profileUrl?: string; sinceIso?: string; limit?: number },
+  ): Promise<Array<Record<string, unknown>>> {
+    return this.runWithMeta(kind, ctx);
   }
 
   async discoverNewVideos(profile: PlatformProfile, since: Date): Promise<NormalizedVideo[]> {
@@ -151,7 +190,7 @@ export class ApifyProvider implements SocialPlatformProvider {
     videos: Video[],
     since: Date,
   ): Promise<PlatformFetchResult> {
-    const result: PlatformFetchResult = { videos: [], commentsByVideo: {} };
+    const result: PlatformFetchResult = { videos: [], commentsByVideo: {}, attempts: [] };
     let items: Array<Record<string, unknown>> = [];
 
     if (profile && this.supportsDiscovery) {
@@ -160,25 +199,48 @@ export class ApifyProvider implements SocialPlatformProvider {
       // (they update existing records; the refresh pipeline never inserts
       // pre-campaign videos as new).
       const margin = new Date(since.getTime() - 3 * 24 * 3600 * 1000);
-      items = await this.run("discover", {
-        profileUrl: profile.profileUrl,
-        sinceIso: margin.toISOString(),
-        limit: 50,
-      });
+      items = await this.runWithMeta(
+        "discover",
+        { profileUrl: profile.profileUrl, sinceIso: margin.toISOString(), limit: 50 },
+        { attempts: result.attempts },
+      );
     }
 
-    const seen = new Set<string>();
+    // Different surfaces of the same platform return the same video under
+    // different shapes (Facebook: feed item exposes views, reel page doesn't).
+    // Ingest MERGES same-video entries instead of dropping later ones — the
+    // record with the most metric fields becomes the merge base.
+    const entryIndex = new Map<string, number>();
+    const keysOf = (n: NormalizedVideo): string[] =>
+      [n.externalVideoId, n.originalUrl].filter((k): k is string => Boolean(k));
     const commentFetches: Array<Promise<void>> = [];
     const ingest = (raw: Record<string, unknown>) => {
       const n = normalizeVideoItem(raw, this.platform);
       if (!n) return;
-      const key = n.externalVideoId ?? n.originalUrl ?? JSON.stringify(raw).slice(0, 80);
-      if (seen.has(key)) return;
-      seen.add(key);
-      result.videos.push(n);
+      const keys = keysOf(n);
+      if (keys.length === 0) return;
+      const existingIdx = keys.map((k) => entryIndex.get(k)).find((i) => i !== undefined);
+      let finalIdx: number;
+      if (existingIdx !== undefined) {
+        const current = result.videos[existingIdx];
+        result.videos[existingIdx] =
+          metricCompleteness(n) > metricCompleteness(current)
+            ? mergeNormalizedVideos(n, current)
+            : mergeNormalizedVideos(current, n);
+        finalIdx = existingIdx;
+      } else {
+        result.videos.push(n);
+        finalIdx = result.videos.length - 1;
+      }
+      for (const k of [...keys, ...keysOf(result.videos[finalIdx])]) entryIndex.set(k, finalIdx);
+
+      const commentKey = result.videos[finalIdx].externalVideoId ?? result.videos[finalIdx].originalUrl ?? keys[0];
       const embedded = extractEmbeddedComments(raw);
       if (embedded.length > 0) {
-        result.commentsByVideo[key] = embedded;
+        result.commentsByVideo[commentKey] = [
+          ...(result.commentsByVideo[commentKey] ?? []),
+          ...embedded,
+        ];
       } else if (typeof raw.commentsDatasetUrl === "string" && this.supportsComments) {
         // Some actors (clockworks TikTok) deliver comments in a side dataset.
         // The dataset is shared across all videos in the run, so filter items
@@ -186,7 +248,7 @@ export class ApifyProvider implements SocialPlatformProvider {
         commentFetches.push(
           fetchCommentsDataset(raw.commentsDatasetUrl, n.externalVideoId, n.originalUrl).then(
             (comments) => {
-              if (comments.length > 0) result.commentsByVideo[key] = comments;
+              if (comments.length > 0) result.commentsByVideo[commentKey] = comments;
             },
           ),
         );
@@ -195,23 +257,49 @@ export class ApifyProvider implements SocialPlatformProvider {
     items.forEach(ingest);
     await Promise.allSettled(commentFetches);
 
+    const matchesTracked = (v: Video): boolean =>
+      Boolean(
+        (v.externalVideoId && entryIndex.has(v.externalVideoId)) || entryIndex.has(v.originalUrl),
+      );
+
     // Direct-URL follow-up for tracked videos the profile sweep didn't return
     // (e.g. pinned exclusions, videos older than the date filter).
-    const missing = videos.filter((v) => {
-      const byId = v.externalVideoId && seen.has(v.externalVideoId);
-      const byUrl = seen.has(v.originalUrl);
-      return !byId && !byUrl;
-    });
+    const missing = videos.filter((v) => !matchesTracked(v));
     // YouTube shorts actor is channel-only; skip URL follow-up there.
     if (missing.length > 0 && this.platform !== "youtube") {
       try {
-        const extra = await this.run("videos", {
-          videoUrls: missing.map((v) => v.originalUrl),
-        });
+        const extra = await this.runWithMeta(
+          "videos",
+          { videoUrls: missing.map((v) => v.originalUrl) },
+          { attempts: result.attempts },
+        );
         extra.forEach(ingest);
       } catch {
-        // Leave the missing videos un-updated; their lastRefreshedAt stays old
-        // and the UI shows the staleness honestly.
+        // Attempt already recorded; the missing videos stay un-updated and the
+        // UI shows the staleness honestly.
+      }
+    }
+
+    // Backup actor pass: only when the primary left key gaps (a tracked video
+    // entirely missing, or returned without a view count).
+    const backupId = this.backupActorId();
+    if (backupId) {
+      const gaps = videos.filter((v) => {
+        if (!matchesTracked(v)) return true;
+        const idx = entryIndex.get(v.externalVideoId ?? "") ?? entryIndex.get(v.originalUrl);
+        return idx !== undefined && result.videos[idx].views === null;
+      });
+      if (gaps.length > 0) {
+        try {
+          const extra = await this.runWithMeta(
+            "videos",
+            { videoUrls: gaps.map((v) => v.originalUrl) },
+            { actorId: backupId, attemptKind: "backup", attempts: result.attempts },
+          );
+          extra.forEach(ingest); // merge fills only the missing fields
+        } catch {
+          // Recorded in attempts; unavailable only after every source failed.
+        }
       }
     }
 

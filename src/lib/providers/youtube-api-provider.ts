@@ -197,7 +197,7 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
     videos: Video[],
     since: Date,
   ): Promise<PlatformFetchResult> {
-    const result: PlatformFetchResult = { videos: [], commentsByVideo: {} };
+    const result: PlatformFetchResult = { videos: [], commentsByVideo: {}, attempts: [] };
     const ids = new Set<string>();
     for (const v of videos) {
       const id = v.externalVideoId ?? parseVideoUrl(v.originalUrl)?.externalVideoId;
@@ -211,7 +211,31 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
         // Discovery failure shouldn't block metrics for known videos.
       }
     }
-    result.videos = await this.fetchVideosByIds([...ids]);
+    try {
+      result.videos = await this.fetchVideosByIds([...ids]);
+      result.attempts.push({
+        provider: "youtube_api",
+        actorId: null,
+        kind: "videos",
+        inputDescription: `videos.list id=[${ids.size} id(s)]`,
+        success: result.videos.length > 0,
+        runId: null,
+        itemCount: result.videos.length,
+        error: null,
+      });
+    } catch (e) {
+      result.attempts.push({
+        provider: "youtube_api",
+        actorId: null,
+        kind: "videos",
+        inputDescription: `videos.list id=[${ids.size} id(s)]`,
+        success: false,
+        runId: null,
+        itemCount: 0,
+        error: e instanceof Error ? e.message.slice(0, 300) : String(e),
+      });
+      throw e;
+    }
     for (const v of result.videos) {
       if (!v.externalVideoId) continue;
       const tracked = videos.find((t) => t.externalVideoId === v.externalVideoId);

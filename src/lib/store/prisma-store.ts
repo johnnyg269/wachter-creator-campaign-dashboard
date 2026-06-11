@@ -23,6 +23,7 @@ import type {
   AlertStatus,
   AlertType,
   Campaign,
+  CollectionAttempt,
   Comment,
   EpisodeGroup,
   ManualOverride,
@@ -236,6 +237,7 @@ function providerConfigToDomain(row: DbProviderConfig): ProviderConfig {
     platform: row.platform as Platform,
     providerType: row.providerType as ProviderType,
     actorId: row.actorId,
+    backupActorId: row.backupActorId ?? null,
     status: row.status as ProviderStatusValue,
     lastTestedAt: isoOrNull(row.lastTestedAt),
     lastTestResult: (row.lastTestResult ?? null) as ActorTestResult | null,
@@ -715,6 +717,65 @@ export class PrismaStore implements Store {
     return rows.map(overrideToDomain);
   }
 
+  // ── Collection attempts ─────────────────────────────────────────────────────
+
+  async addCollectionAttempt(
+    a: Omit<CollectionAttempt, "id"> & { id?: string },
+  ): Promise<CollectionAttempt> {
+    const row = await this.prisma.collectionAttempt.create({
+      data: {
+        id: a.id ?? undefined,
+        refreshRunId: a.refreshRunId,
+        platform: a.platform,
+        provider: a.provider,
+        actorId: a.actorId,
+        kind: a.kind,
+        inputDescription: a.inputDescription,
+        success: a.success,
+        runId: a.runId,
+        itemCount: a.itemCount,
+        error: a.error,
+        capturedAt: toDate(a.capturedAt),
+      },
+    });
+    return {
+      id: row.id,
+      refreshRunId: row.refreshRunId,
+      platform: row.platform as Platform,
+      provider: row.provider as ProviderType,
+      actorId: row.actorId,
+      kind: row.kind,
+      inputDescription: row.inputDescription,
+      success: row.success,
+      runId: row.runId,
+      itemCount: row.itemCount,
+      error: row.error,
+      capturedAt: iso(row.capturedAt),
+    };
+  }
+
+  async listCollectionAttempts(limit = 50, platform?: Platform): Promise<CollectionAttempt[]> {
+    const rows = await this.prisma.collectionAttempt.findMany({
+      where: platform ? { platform } : undefined,
+      orderBy: { capturedAt: "desc" },
+      take: limit,
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      refreshRunId: row.refreshRunId,
+      platform: row.platform as Platform,
+      provider: row.provider as ProviderType,
+      actorId: row.actorId,
+      kind: row.kind,
+      inputDescription: row.inputDescription,
+      success: row.success,
+      runId: row.runId,
+      itemCount: row.itemCount,
+      error: row.error,
+      capturedAt: iso(row.capturedAt),
+    }));
+  }
+
   // ── Provider configs ───────────────────────────────────────────────────────
 
   async listProviderConfigs(): Promise<ProviderConfig[]> {
@@ -734,6 +795,7 @@ export class PrismaStore implements Store {
     const data = {
       providerType: p.providerType,
       actorId: p.actorId,
+      backupActorId: p.backupActorId ?? null,
       status: p.status,
       lastTestedAt: toDateOrNull(p.lastTestedAt),
       lastTestResult: toJsonIn(p.lastTestResult),

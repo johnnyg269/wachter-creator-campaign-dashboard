@@ -7,6 +7,7 @@ import type { StoreInfo } from "./store/types";
 import {
   type Alert,
   type Campaign,
+  type CollectionAttempt,
   type Comment,
   type EpisodeGroup,
   type MetricSnapshot,
@@ -26,10 +27,12 @@ import {
   computeVideoMetrics,
   deltaOverWindow,
   isSparseTrend,
+  rankByConfirmedViews,
   sumNullable,
   type TrendPoint,
   type VideoMetrics,
 } from "./metrics";
+import { computeCompleteness, type Completeness } from "./completeness";
 import { ensureSeedData } from "./seed";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
@@ -353,7 +356,9 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     responseOpportunities,
     platformStats,
     leaderboard: {
-      mostViewed: sortBy((m) => m.latest?.views ?? null).slice(0, 10),
+      // Only videos with confirmed (current or last-confirmed) views compete —
+      // never-confirmed videos don't rank as silent zeros.
+      mostViewed: rankByConfirmedViews(all).slice(0, 10),
       fastestGrowing: fastest.slice(0, 10),
       highestEngagement: sortBy((m) => m.engagementRate).filter((m) => m.engagementRate !== null).slice(0, 10),
       mostCommented: sortBy((m) => m.latest?.comments ?? null).slice(0, 10),
@@ -400,10 +405,12 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
 function buildKpis(all: VideoMetrics[]): Kpis {
   const er = all.map((m) => m.engagementRate).filter((r): r is number => r !== null);
   return {
-    totalViews: sumNullable(all.map((m) => m.latest?.views ?? null)),
+    // Last-confirmed values: a metric the source skipped THIS refresh still
+    // counts at its last confirmed reading instead of vanishing from totals.
+    totalViews: sumNullable(all.map((m) => m.confirmed.views?.value ?? null)),
     totalEngagements: sumNullable(all.map((m) => m.engagements)),
-    totalLikes: sumNullable(all.map((m) => m.latest?.likes ?? null)),
-    totalComments: sumNullable(all.map((m) => m.latest?.comments ?? null)),
+    totalLikes: sumNullable(all.map((m) => m.confirmed.likes?.value ?? null)),
+    totalComments: sumNullable(all.map((m) => m.confirmed.comments?.value ?? null)),
     avgEngagementRate: er.length > 0 ? er.reduce((a, b) => a + b, 0) / er.length : null,
     videosTracked: all.length,
     viewsGained24h: sumNullable(all.map((m) => m.delta24h?.value ?? null)),
@@ -424,19 +431,19 @@ function buildPlatformStats(data: CampaignData, health: HealthSummary): Platform
   return PLATFORMS.map((platform) => {
     const vids = data.videos.filter((v) => v.platform === platform);
     const ms = vids.map((v) => data.metricsByVideo.get(v.id)).filter((m): m is VideoMetrics => Boolean(m));
-    const views = sumNullable(ms.map((m) => m.latest?.views ?? null));
+    const views = sumNullable(ms.map((m) => m.confirmed.views?.value ?? null));
     const eng = sumNullable(ms.map((m) => m.engagements));
     const ph = health.platforms.find((p) => p.platform === platform);
-    const withViews = ms.filter((m) => m.latest?.views !== null);
+    const withViews = ms.filter((m) => m.confirmed.views !== null);
     const best = [...withViews].sort(
-      (a, b) => (b.latest?.views ?? 0) - (a.latest?.views ?? 0),
+      (a, b) => (b.confirmed.views?.value ?? 0) - (a.confirmed.views?.value ?? 0),
     )[0];
     return {
       platform,
       videoCount: vids.length,
       views,
-      likes: sumNullable(ms.map((m) => m.latest?.likes ?? null)),
-      comments: sumNullable(ms.map((m) => m.latest?.comments ?? null)),
+      likes: sumNullable(ms.map((m) => m.confirmed.likes?.value ?? null)),
+      comments: sumNullable(ms.map((m) => m.confirmed.comments?.value ?? null)),
       engagements: eng,
       engagementRate: eng !== null && views !== null && views > 0 ? eng / views : null,
       viewsGained24h: sumNullable(ms.map((m) => m.delta24h?.value ?? null)),
@@ -448,7 +455,10 @@ function buildPlatformStats(data: CampaignData, health: HealthSummary): Platform
         }),
       ),
       avgViewsPerVideo: views !== null && withViews.length > 0 ? Math.round(views / withViews.length) : null,
-      bestVideo: best && best.latest?.views != null ? { video: best.video, views: best.latest.views } : null,
+      bestVideo:
+        best && best.confirmed.views !== null
+          ? { video: best.video, views: best.confirmed.views.value }
+          : null,
       latestVideo:
         [...vids].sort((a, b) =>
           (b.publishedAt ?? b.firstTrackedAt).localeCompare(a.publishedAt ?? a.firstTrackedAt),
@@ -660,12 +670,18 @@ export interface AdminPageData {
   providerConfigs: ProviderConfig[];
   tokenStatus: ApifyTokenStatus;
   overrides: Awaited<ReturnType<ReturnType<typeof getStore>["listOverrides"]>>;
+  /** Per-video field-completeness scores. */
+  completeness: Record<string, Completeness>;
+  /** Recent collection attempts (the provider attempt log). */
+  attempts: CollectionAttempt[];
   /** Production-readiness booleans (never the secret values themselves). */
   readiness: {
     databaseConnected: boolean;
     cronSecretSet: boolean;
     adminPasswordSet: boolean;
     actorIds: Record<Platform, string | null>;
+    /** Average completeness across visible videos, 0–100. */
+    avgCompleteness: number | null;
   };
 }
 
@@ -679,6 +695,15 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     string | null
   >;
   for (const p of health.platforms) actorIds[p.platform] = p.actorId;
+  const completeness: Record<string, Completeness> = {};
+  for (const v of data.videos) {
+    const m = data.metricsByVideo.get(v.id);
+    if (m) completeness[v.id] = computeCompleteness(v, m);
+  }
+  const visibleScores = data.videos
+    .filter((v) => !v.hidden)
+    .map((v) => completeness[v.id]?.score)
+    .filter((s): s is number => typeof s === "number");
   return {
     campaign: data.campaign,
     health,
@@ -692,11 +717,17 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     providerConfigs: await store.listProviderConfigs(),
     tokenStatus: await checkToken(),
     overrides: await store.listOverrides(30),
+    completeness,
+    attempts: await store.listCollectionAttempts(40),
     readiness: {
       databaseConnected: health.store.kind === "postgres",
       cronSecretSet: getCronSecret() !== null,
       adminPasswordSet: getAdminPassword() !== null,
       actorIds,
+      avgCompleteness:
+        visibleScores.length > 0
+          ? Math.round(visibleScores.reduce((a, b) => a + b, 0) / visibleScores.length)
+          : null,
     },
   };
 }

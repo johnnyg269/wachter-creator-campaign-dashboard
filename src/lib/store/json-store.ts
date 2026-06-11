@@ -11,6 +11,7 @@ import type {
   Alert,
   AlertStatus,
   Campaign,
+  CollectionAttempt,
   Comment,
   EpisodeGroup,
   ManualOverride,
@@ -34,6 +35,7 @@ interface DbShape {
   alerts: Alert[];
   overrides: ManualOverride[];
   providerConfigs: ProviderConfig[];
+  collectionAttempts: CollectionAttempt[];
 }
 
 const EMPTY: DbShape = {
@@ -47,6 +49,7 @@ const EMPTY: DbShape = {
   alerts: [],
   overrides: [],
   providerConfigs: [],
+  collectionAttempts: [],
 };
 
 function resolveDbPath(): { file: string; ephemeral: boolean } {
@@ -396,6 +399,29 @@ export class JsonStore implements Store {
   async listOverrides(limit = 50): Promise<ManualOverride[]> {
     const db = await this.load();
     return [...db.overrides].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  }
+
+  // ── Collection attempts ───────────────────────────────────────────────────
+
+  async addCollectionAttempt(
+    a: Omit<CollectionAttempt, "id"> & { id?: string },
+  ): Promise<CollectionAttempt> {
+    const db = await this.load();
+    const created: CollectionAttempt = { id: a.id ?? randomUUID(), ...a };
+    db.collectionAttempts.push(created);
+    // Cap the log so the JSON file doesn't grow without bound.
+    if (db.collectionAttempts.length > 500) {
+      db.collectionAttempts = db.collectionAttempts.slice(-500);
+    }
+    await this.persist();
+    return created;
+  }
+
+  async listCollectionAttempts(limit = 50, platform?: Platform): Promise<CollectionAttempt[]> {
+    const db = await this.load();
+    let out = db.collectionAttempts;
+    if (platform) out = out.filter((a) => a.platform === platform);
+    return [...out].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, limit);
   }
 
   // ── Provider configs ──────────────────────────────────────────────────────

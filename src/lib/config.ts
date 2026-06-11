@@ -43,6 +43,18 @@ export function getActorIdFromEnv(platform: Platform): string | null {
   return v ? v : null;
 }
 
+const BACKUP_ACTOR_ENV_KEYS: Record<Platform, string> = {
+  tiktok: "APIFY_TIKTOK_BACKUP_ACTOR_ID",
+  instagram: "APIFY_INSTAGRAM_BACKUP_ACTOR_ID",
+  facebook: "APIFY_FACEBOOK_BACKUP_ACTOR_ID",
+  youtube: "APIFY_YOUTUBE_BACKUP_ACTOR_ID",
+};
+
+export function getBackupActorIdFromEnv(platform: Platform): string | null {
+  const v = process.env[BACKUP_ACTOR_ENV_KEYS[platform]]?.trim();
+  return v ? v : null;
+}
+
 export function actorEnvKey(platform: Platform): string {
   return ACTOR_ENV_KEYS[platform];
 }

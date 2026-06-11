@@ -4,6 +4,7 @@
 
 import type { NormalizedComment, NormalizedVideo, Platform } from "../types";
 import { parseVideoUrl } from "../url-parse";
+import { deepFindMetric } from "./deep-extract";
 
 type Raw = Record<string, unknown>;
 
@@ -137,9 +138,17 @@ export function normalizeVideoItem(raw: Raw, platform: Platform): NormalizedVide
     externalVideoId = parseVideoUrl(url)?.externalVideoId ?? null;
   }
 
-  const views = firstNumber(obj, VIEW_PATHS);
-  const likes = firstNumber(obj, LIKE_PATHS);
-  const comments = firstNumber(obj, COMMENT_COUNT_PATHS);
+  let views = firstNumber(obj, VIEW_PATHS);
+  let likes = firstNumber(obj, LIKE_PATHS);
+  let comments = firstNumber(obj, COMMENT_COUNT_PATHS);
+  let shares = firstNumber(obj, SHARE_PATHS);
+
+  // Defense-in-depth: when the explicit path lists miss, walk the raw object
+  // for known metric field names (records the path for debuggability).
+  if (views === null) views = deepFindMetric(obj, "views")?.value ?? null;
+  if (likes === null) likes = deepFindMetric(obj, "likes")?.value ?? null;
+  if (comments === null) comments = deepFindMetric(obj, "comments")?.value ?? null;
+  if (shares === null) shares = deepFindMetric(obj, "shares")?.value ?? null;
 
   if (!url && !externalVideoId && views === null && likes === null) return null;
 
@@ -159,7 +168,7 @@ export function normalizeVideoItem(raw: Raw, platform: Platform): NormalizedVide
     views,
     likes,
     comments,
-    shares: firstNumber(obj, SHARE_PATHS),
+    shares,
     saves: firstNumber(obj, SAVE_PATHS),
     bookmarks: null, // folded into saves via SAVE_PATHS; kept for schema parity
     rawJson: raw,
@@ -204,6 +213,41 @@ export function extractEmbeddedComments(raw: Raw): NormalizedComment[] {
     }
   }
   return [];
+}
+
+/**
+ * Merge two normalized records for the SAME video coming from different
+ * surfaces of the same platform (e.g. Facebook feed item + reel-page item).
+ * Base wins for every non-null field; extra only fills gaps — so the surface
+ * that exposes views (feed) is never clobbered by the one that doesn't.
+ */
+export function mergeNormalizedVideos(
+  base: NormalizedVideo,
+  extra: NormalizedVideo,
+): NormalizedVideo {
+  return {
+    platform: base.platform,
+    originalUrl: base.originalUrl ?? extra.originalUrl,
+    externalVideoId: base.externalVideoId ?? extra.externalVideoId,
+    title: base.title ?? extra.title,
+    caption: base.caption ?? extra.caption,
+    thumbnailUrl: base.thumbnailUrl ?? extra.thumbnailUrl,
+    publishedAt: base.publishedAt ?? extra.publishedAt,
+    authorName: base.authorName ?? extra.authorName,
+    authorHandle: base.authorHandle ?? extra.authorHandle,
+    views: base.views ?? extra.views,
+    likes: base.likes ?? extra.likes,
+    comments: base.comments ?? extra.comments,
+    shares: base.shares ?? extra.shares,
+    saves: base.saves ?? extra.saves,
+    bookmarks: base.bookmarks ?? extra.bookmarks,
+    rawJson: base.rawJson ?? extra.rawJson,
+  };
+}
+
+/** Count of populated metric fields — used to pick the best merge base. */
+export function metricCompleteness(n: NormalizedVideo): number {
+  return [n.views, n.likes, n.comments, n.shares, n.saves].filter((v) => v !== null).length;
 }
 
 export interface DetectedCapabilities {
