@@ -1,0 +1,201 @@
+// Prisma schema — used when DATABASE_URL (Supabase Postgres) is configured.
+// Without DATABASE_URL the app falls back to the local JSON store; the client
+// is still generated so the build never depends on a live database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Campaign {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  creatorName String
+  company     String
+  startDate   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profiles      PlatformProfile[]
+  videos        Video[]
+  episodeGroups EpisodeGroup[]
+  alerts        Alert[]
+}
+
+model PlatformProfile {
+  id                String    @id @default(uuid())
+  campaignId        String
+  platform          String
+  profileUrl        String    @unique
+  handle            String?
+  externalProfileId String?
+  lastDiscoveredAt  DateTime?
+  status            String    @default("waiting")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  videos   Video[]
+
+  @@index([campaignId, platform])
+}
+
+model Video {
+  id              String    @id @default(uuid())
+  campaignId      String
+  platform        String
+  profileId       String?
+  originalUrl     String    @unique
+  externalVideoId String?
+  title           String?
+  caption         String?
+  thumbnailUrl    String?
+  publishedAt     DateTime?
+  firstTrackedAt  DateTime
+  lastRefreshedAt DateTime?
+  status          String    @default("active")
+  episodeGroupId  String?
+  sourceStatus    String    @default("waiting")
+  errorMessage    String?
+  hidden          Boolean   @default(false)
+  isSeed          Boolean   @default(false)
+  rawJson         Json?
+
+  campaign     Campaign         @relation(fields: [campaignId], references: [id])
+  profile      PlatformProfile? @relation(fields: [profileId], references: [id])
+  episodeGroup EpisodeGroup?    @relation(fields: [episodeGroupId], references: [id])
+  snapshots    MetricSnapshot[]
+  commentsRel  Comment[]
+  alerts       Alert[]
+
+  @@index([campaignId, platform])
+  @@index([platform, externalVideoId])
+}
+
+model MetricSnapshot {
+  id             String   @id @default(uuid())
+  videoId        String
+  capturedAt     DateTime
+  views          Int?
+  likes          Int?
+  comments       Int?
+  shares         Int?
+  saves          Int?
+  bookmarks      Int?
+  engagementRate Float?
+  rawJson        Json?
+
+  video Video @relation(fields: [videoId], references: [id])
+
+  @@index([videoId, capturedAt])
+  @@index([capturedAt])
+}
+
+model Comment {
+  id                String   @id @default(uuid())
+  videoId           String
+  platform          String
+  externalCommentId String?
+  authorName        String?
+  text              String
+  postedAt          DateTime?
+  likes             Int?
+  replyCount        Int?
+  sentiment         String?
+  needsResponse     Boolean  @default(false)
+  tags              String[]
+  permalink         String?
+  capturedAt        DateTime
+  rawJson           Json?
+
+  video Video @relation(fields: [videoId], references: [id])
+
+  @@index([videoId])
+  @@index([platform, postedAt])
+  @@unique([videoId, externalCommentId])
+}
+
+model RefreshRun {
+  id                  String    @id @default(uuid())
+  startedAt           DateTime
+  finishedAt          DateTime?
+  status              String
+  trigger             String    @default("manual")
+  platformsAttempted  String[]
+  videosUpdated       Int       @default(0)
+  commentsUpdated     Int       @default(0)
+  newVideosDiscovered Int       @default(0)
+  errors              String[]
+  rawLog              String[]
+
+  @@index([startedAt])
+}
+
+model EpisodeGroup {
+  id          String   @id @default(uuid())
+  campaignId  String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  videos   Video[]
+
+  @@unique([campaignId, name])
+}
+
+model Alert {
+  id              String    @id @default(uuid())
+  campaignId      String
+  videoId         String?
+  platform        String?
+  type            String
+  severity        String
+  title           String
+  message         String
+  suggestedAction String?
+  createdAt       DateTime
+  reviewedAt      DateTime?
+  status          String    @default("open")
+  dedupeKey       String?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  video    Video?   @relation(fields: [videoId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([dedupeKey])
+}
+
+model ManualOverride {
+  id         String   @id @default(uuid())
+  entityType String
+  entityId   String
+  field      String
+  oldValue   String?
+  newValue   String?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+model ProviderConfig {
+  id                      String    @id @default(uuid())
+  platform                String    @unique
+  providerType            String
+  actorId                 String?
+  status                  String    @default("untested")
+  lastTestedAt            DateTime?
+  lastTestResult          Json?
+  detectedFields          String[]
+  supportsMetadata        Boolean   @default(false)
+  supportsMetrics         Boolean   @default(false)
+  supportsComments        Boolean   @default(false)
+  supportsDiscovery       Boolean   @default(false)
+  inputOverride           Json?
+  lastSuccessfulRefreshAt DateTime?
+  updatedAt               DateTime  @updatedAt
+}

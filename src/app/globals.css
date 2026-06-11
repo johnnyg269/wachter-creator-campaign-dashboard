@@ -1,26 +1,91 @@
 @import "tailwindcss";
 
+/* ── Wachter command-center theme (dark, executive) ─────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07090e;
+  --surface: #0d1117;
+  --surface-raised: #11161f;
+  --surface-hover: #161d29;
+  --border: #1c2433;
+  --border-strong: #2a3447;
+  --foreground: #e8edf4;
+  --muted: #8b97a8;
+  --muted-strong: #5c6878;
+  --accent: #3b82f6;
+  --accent-soft: rgba(59, 130, 246, 0.12);
+  --positive: #34d399;
+  --negative: #f87171;
+  --warning: #fbbf24;
+
+  /* Platform accents */
+  --tiktok: #25f4ee;
+  --youtube: #ff4444;
+  --instagram: #e95daa;
+  --facebook: #4b8dff;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-accent: var(--accent);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
+  --color-tiktok: var(--tiktok);
+  --color-youtube: var(--youtube);
+  --color-instagram: var(--instagram);
+  --color-facebook: var(--facebook);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* subtle radial glow behind the page */
+.page-glow {
+  background:
+    radial-gradient(ellipse 80% 40% at 50% -10%, rgba(59, 130, 246, 0.08), transparent),
+    var(--background);
+}
+
+::selection {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* number tabularity for metric values */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
