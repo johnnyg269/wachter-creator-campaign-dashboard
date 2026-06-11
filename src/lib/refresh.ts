@@ -18,7 +18,7 @@ import type { Store } from "./store/types";
 import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
 import { ApifyProvider } from "./providers/apify-provider";
-import { mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
+import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
 import { engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
@@ -358,6 +358,16 @@ async function upsertFetchedVideo(
   // (Seeds are matched above by URL/ID regardless of date; discovery sweeps
   // intentionally over-fetch a few days back to catch them.)
   if (n.publishedAt && campaign.startDate && n.publishedAt < campaign.startDate) {
+    return null;
+  }
+
+  // Only actual videos enter the tracker — profile feeds (Facebook) also
+  // return photo/text posts, which must not compete in video metrics.
+  if (
+    n.rawJson &&
+    typeof n.rawJson === "object" &&
+    !isLikelyVideoItem(n.rawJson as Record<string, unknown>, platform)
+  ) {
     return null;
   }
 

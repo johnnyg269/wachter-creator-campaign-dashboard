@@ -250,6 +250,23 @@ export function metricCompleteness(n: NormalizedVideo): number {
   return [n.views, n.likes, n.comments, n.shares, n.saves].filter((v) => v !== null).length;
 }
 
+/**
+ * Is this raw feed item actually a VIDEO? The Facebook posts scraper returns
+ * every post type (photos, text, links) from a profile feed — only video/reel
+ * items belong in a video campaign tracker. Other platforms' actors return
+ * videos by construction.
+ */
+export function isLikelyVideoItem(raw: Raw, platform: Platform): boolean {
+  if (platform !== "facebook") return true;
+  const url = firstString(raw, URL_PATHS) ?? "";
+  if (/\/reel\/|\/videos\/|\/watch\/?\?|fb\.watch/.test(url)) return true;
+  // Video markers anywhere in the payload (reel context, playable media, …)
+  const s = JSON.stringify(raw);
+  return /short_form_video_context|playable_duration|"videoUrl"|"video_id"|VideoAttachment|is_video_broadcast/.test(
+    s,
+  );
+}
+
 export interface DetectedCapabilities {
   fields: string[];
   supportsMetadata: boolean;

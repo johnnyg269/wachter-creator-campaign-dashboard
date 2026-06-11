@@ -218,3 +218,35 @@ describe("CollectionAttempt store operations", () => {
     expect(await store.listCollectionAttempts(10)).toHaveLength(3);
   });
 });
+
+describe("isLikelyVideoItem — photo/text posts never enter the tracker", () => {
+  it("rejects a Facebook photo/permalink post", async () => {
+    const { isLikelyVideoItem } = await import("@/lib/apify/normalize");
+    const photoPost = {
+      url: "https://www.facebook.com/permalink.php?story_fbid=pfbid0Fux&id=615855",
+      message: { text: "I've never seen a conference room like this before." },
+      likers: { count: 1 },
+      attachments: [{ photo_image: { uri: "https://scontent/x.jpg" } }],
+    };
+    expect(isLikelyVideoItem(photoPost, "facebook")).toBe(false);
+  });
+  it("accepts Facebook reels (URL form or video markers)", async () => {
+    const { isLikelyVideoItem } = await import("@/lib/apify/normalize");
+    expect(
+      isLikelyVideoItem({ facebookUrl: "https://www.facebook.com/reel/126800" }, "facebook"),
+    ).toBe(true);
+    expect(
+      isLikelyVideoItem(
+        {
+          url: "https://www.facebook.com/permalink.php?story_fbid=x",
+          short_form_video_context: { playback_video: {} },
+        },
+        "facebook",
+      ),
+    ).toBe(true);
+  });
+  it("passes everything through for video-only platforms", async () => {
+    const { isLikelyVideoItem } = await import("@/lib/apify/normalize");
+    expect(isLikelyVideoItem({ anything: 1 }, "tiktok")).toBe(true);
+  });
+});
