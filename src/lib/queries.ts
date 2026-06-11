@@ -106,7 +106,15 @@ export interface CampaignData {
 export async function loadCampaignData(includeHidden = false): Promise<CampaignData> {
   const store = getStore();
   const campaign = await ensureSeedData(store);
-  const videos = await store.listVideos({ includeHidden });
+  // Strip raw actor payloads before anything page-facing: client-component
+  // props serialize into the public page payload, and rawJson contains
+  // internal collector URLs (signed dataset links) and vendor field names.
+  // Pipelines that need rawJson read the store directly.
+  const videos = (await store.listVideos({ includeHidden })).map((v) => ({
+    ...v,
+    rawJson: null,
+    errorMessage: v.errorMessage ? v.errorMessage.replace(/apify/gi, "collector") : null,
+  }));
   const allSnaps = await store.listAllSnapshots();
   const snapshotsByVideo = new Map<string, MetricSnapshot[]>();
   for (const s of allSnaps) {

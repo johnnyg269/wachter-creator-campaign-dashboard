@@ -7,11 +7,28 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { Check, ChevronDown, Minus } from "lucide-react";
-import type { PlatformHealth, SourceCapability } from "@/lib/queries";
-import { PLATFORM_LABELS } from "@/lib/types";
+import type { SourceCapability } from "@/lib/queries";
+import type { Platform, SourceStatus } from "@/lib/types";
 import { PlatformBadge } from "@/components/ui/platform";
 import { StatusPill } from "@/components/ui/status";
 import { TimeAgo } from "@/components/ui/time-ago";
+
+/**
+ * Public-safe projection of platform health. This is a CLIENT component, so
+ * every prop is serialized into the page payload — no actor IDs, provider
+ * types, or internal setup language may appear here.
+ */
+export interface PublicPlatformStatus {
+  platform: Platform;
+  sourceStatus: SourceStatus;
+  /** Already sanitized server-side for public display. */
+  statusDetail: string | null;
+  lastSuccessfulRefreshAt: string | null;
+  supportsComments: boolean;
+  supportsDiscovery: boolean;
+  /** Friendly source name, e.g. "Automated collection". */
+  sourceLabel: string;
+}
 
 function CapDot({ on, label }: { on: boolean; label: string }) {
   return (
@@ -26,7 +43,7 @@ export function SourceStatusPanel({
   platforms,
   capabilities,
 }: {
-  platforms: PlatformHealth[];
+  platforms: PublicPlatformStatus[];
   capabilities: SourceCapability[];
 }) {
   const [open, setOpen] = useState(false);
@@ -82,17 +99,7 @@ export function SourceStatusPanel({
                   <div>
                     Last refresh: <TimeAgo iso={p.lastSuccessfulRefreshAt} />
                   </div>
-                  <div className="truncate">
-                    {/* Public-friendly source naming — technical detail lives in /admin */}
-                    Source:{" "}
-                    {p.providerType === "apify"
-                      ? "Automated collection"
-                      : p.providerType === "youtube_api"
-                        ? "Official YouTube API"
-                        : p.providerType === "mock"
-                          ? "Demo data"
-                          : `Manual (${PLATFORM_LABELS[p.platform]})`}
-                  </div>
+                  <div className="truncate">Source: {p.sourceLabel}</div>
                 </div>
               </div>
             );

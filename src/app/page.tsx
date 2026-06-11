@@ -223,8 +223,34 @@ export default async function DashboardPage({
         )}
       </div>
 
-      {/* Per-platform source status with expandable capability details */}
-      <SourceStatusPanel platforms={health.platforms} capabilities={data.sourceCapabilities} />
+      {/* Per-platform source status with expandable capability details.
+          SourceStatusPanel is a client component — its props serialize into
+          the public page payload, so only this sanitized projection (no actor
+          IDs, no provider/vendor names, no setup language) may cross. */}
+      <SourceStatusPanel
+        platforms={health.platforms.map((p) => ({
+          platform: p.platform,
+          sourceStatus: p.sourceStatus,
+          statusDetail:
+            p.sourceStatus === "live" || p.sourceStatus === "waiting"
+              ? null
+              : "Not connected — configure in Admin",
+          lastSuccessfulRefreshAt: p.lastSuccessfulRefreshAt,
+          supportsComments: p.supportsComments,
+          supportsDiscovery: p.supportsDiscovery,
+          sourceLabel:
+            p.providerType === "youtube_api"
+              ? "Official YouTube API"
+              : p.providerType === "mock"
+                ? "Demo data"
+                : p.providerType === "manual"
+                  ? "Manual entry"
+                  : "Automated collection",
+        }))}
+        capabilities={data.sourceCapabilities.map((c) =>
+          c.live ? c : { ...c, summary: "Not connected — configure in Admin" },
+        )}
+      />
 
       <div className="space-y-6">
         {/* KPI grid */}
