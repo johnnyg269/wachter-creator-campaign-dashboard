@@ -1,5 +1,5 @@
 # Scheduled campaign refresh — hits the production cron endpoint every
-# 10 minutes. Works on any plan (the schedule runs here, not on Vercel).
+# 5 minutes. Overlap-safe: the app skips a run if one is already in progress. Works on any plan (the schedule runs here, not on Vercel).
 #
 # Setup (after pushing this repo to GitHub):
 #   Repo → Settings → Secrets and variables → Actions:
@@ -12,7 +12,7 @@ name: Refresh campaign data
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 jobs:

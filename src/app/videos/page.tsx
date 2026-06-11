@@ -3,7 +3,7 @@
 // the table handles all interactivity.
 
 import { PageHeader } from "@/components/layout/page-header";
-import { RefreshButton } from "@/components/ui/refresh-button";
+import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { getVideosPageData } from "@/lib/queries";
 import { formatDate } from "@/lib/format";
 import { VideosTable } from "./videos-table";
@@ -24,7 +24,7 @@ export default async function VideosPage() {
             ? `${countLabel} · campaign started ${formatDate(campaign.startDate)}`
             : countLabel
         }
-        actions={<RefreshButton />}
+        actions={<AutoRefreshNote />}
       />
       <VideosTable rows={rows} episodes={episodes} />
     </div>

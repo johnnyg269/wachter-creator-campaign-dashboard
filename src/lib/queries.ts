@@ -65,7 +65,8 @@ export async function getHealth(): Promise<HealthSummary> {
   const store = getStore();
   await ensureSeedData(store);
   const providers = await resolveAllProviders(store);
-  const runs = await store.listRefreshRuns(1);
+  // Last MEANINGFUL run — skipped gate entries are bookkeeping, not refreshes.
+  const runs = (await store.listRefreshRuns(10)).filter((r) => r.status !== "skipped");
   const platforms: PlatformHealth[] = PLATFORMS.map((p) => {
     const r = providers[p];
     return {

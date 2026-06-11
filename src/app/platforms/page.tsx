@@ -14,7 +14,7 @@ import { StatusPill } from "@/components/ui/status";
 import { DeltaTag } from "@/components/ui/delta";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
-import { RefreshButton } from "@/components/ui/refresh-button";
+import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataNotice } from "@/components/layout/data-notice";
 import { SimpleBarChart, type BarDatum } from "@/components/charts/bar-chart";
@@ -180,7 +180,7 @@ export default async function PlatformsPage() {
       <PageHeader
         title="Platforms"
         subtitle={`${campaign.creatorName} × ${campaign.company} — side-by-side performance across all four networks`}
-        actions={<RefreshButton />}
+        actions={<AutoRefreshNote />}
       />
 
       {/* Comparison charts */}

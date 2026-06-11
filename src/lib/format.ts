@@ -68,3 +68,36 @@ export function truncate(s: string | null | undefined, len: number): string {
   if (!s) return "";
   return s.length > len ? `${s.slice(0, len - 1)}…` : s;
 }
+
+/**
+ * Comment-delta wording for platform cards. Raw "+0" / "-1 comments 24h" reads
+ * as broken next to the comment total, so:
+ *   null → not enough data · 0 → "No new comments" · +N → "+N new comments"
+ *   negative → "Comment count changed" (scraped totals fluctuate when sources
+ *   recount replies; a bare negative number would imply deleted engagement we
+ *   can't verify).
+ */
+export function describeCommentDelta(value: number | null | undefined): {
+  text: string;
+  tooltip: string | null;
+  tone: "positive" | "muted";
+} {
+  if (value === null || value === undefined) {
+    return { text: "— comments 24h", tooltip: "Not enough data yet", tone: "muted" };
+  }
+  if (value === 0) {
+    return { text: "No new comments 24h", tooltip: null, tone: "muted" };
+  }
+  if (value > 0) {
+    return {
+      text: `+${formatCompact(value)} new comment${value === 1 ? "" : "s"} 24h`,
+      tooltip: null,
+      tone: "positive",
+    };
+  }
+  return {
+    text: "Comment count changed",
+    tooltip: "Latest source returned a lower comment count than the previous snapshot.",
+    tone: "muted",
+  };
+}

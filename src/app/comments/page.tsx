@@ -7,7 +7,7 @@ import { getCommentsPageData, getHealth } from "@/lib/queries";
 import { formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataNotice } from "@/components/layout/data-notice";
-import { RefreshButton } from "@/components/ui/refresh-button";
+import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { CommentFeed } from "./comment-feed";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +26,7 @@ export default async function CommentsPage() {
       <PageHeader
         title="Comments"
         subtitle={`${formatNumber(count)} ${count === 1 ? "comment" : "comments"} across 4 platforms`}
-        actions={<RefreshButton />}
+        actions={<AutoRefreshNote />}
       />
       <CommentFeed
         comments={data.comments}

@@ -169,8 +169,8 @@ export interface RefreshRun {
   id: string;
   startedAt: string;
   finishedAt: string | null;
-  status: "running" | "success" | "partial" | "failed";
-  trigger: "manual" | "cron" | "script";
+  status: "running" | "success" | "partial" | "failed" | "skipped";
+  trigger: "manual" | "cron" | "script" | "force";
   platformsAttempted: Platform[];
   videosUpdated: number;
   commentsUpdated: number;
@@ -309,6 +309,8 @@ export interface RefreshReport {
   startedAt: string;
   finishedAt: string;
   status: RefreshRun["status"];
+  /** Human-readable reason when status is "skipped". */
+  skipReason?: string;
   platforms: Array<{
     platform: Platform;
     providerType: ProviderType | null;

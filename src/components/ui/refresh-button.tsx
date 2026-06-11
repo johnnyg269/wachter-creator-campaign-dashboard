@@ -1,14 +1,26 @@
 "use client";
 
-// Manual refresh trigger. Refreshes can take minutes (Apify actor runs), so
-// the button shows a working state and reports the outcome inline.
+// ADMIN-ONLY manual refresh trigger (the /api/refresh endpoint rejects
+// unauthenticated calls; public viewers rely on the 5-minute auto-refresh).
+// Refreshes can take minutes, so the button shows a working state, reports
+// skip reasons ("refreshed recently", "already running") cleanly, and treats
+// gateway-timed-out responses as background completion.
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import clsx from "clsx";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
 
-export function RefreshButton({ className }: { className?: string }) {
+export function RefreshButton({
+  className,
+  force = false,
+  label,
+}: {
+  className?: string;
+  /** Admin "Force refresh": bypasses the 3-minute freshness gate (never the lock). */
+  force?: boolean;
+  label?: string;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -17,11 +29,15 @@ export function RefreshButton({ className }: { className?: string }) {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/refresh", { method: "POST" });
+      const res = await fetch("/api/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
       interface RefreshResponse {
         ok: boolean;
         error?: string;
-        report?: { status: string; errors: string[] };
+        report?: { status: string; errors: string[]; skipReason?: string };
       }
       let data: RefreshResponse | null = null;
       try {
@@ -30,13 +46,15 @@ export function RefreshButton({ className }: { className?: string }) {
         data = null;
       }
       if (data?.ok && data.report) {
-        const { status, errors } = data.report;
+        const { status, errors, skipReason } = data.report;
         setMessage(
-          status === "success"
-            ? "Refreshed"
-            : errors.length > 0
-              ? `${status}: ${errors[0]}`
-              : `Refresh ${status}`,
+          status === "skipped"
+            ? (skipReason ?? "Refresh skipped")
+            : status === "success"
+              ? "Refreshed"
+              : errors.length > 0
+                ? `${status}: ${errors[0]}`
+                : `Refresh ${status}`,
         );
       } else if (data && !data.ok) {
         setMessage(data.error ?? "Refresh failed");
@@ -61,7 +79,7 @@ export function RefreshButton({ className }: { className?: string }) {
   return (
     <div className={clsx("flex items-center gap-2", className)}>
       {message && (
-        <span className="max-w-56 truncate text-[11px] text-muted" title={message}>
+        <span className="max-w-64 truncate text-[11px] text-muted" title={message}>
           {message}
         </span>
       )}
@@ -69,12 +87,19 @@ export function RefreshButton({ className }: { className?: string }) {
         onClick={refresh}
         disabled={busy}
         className={clsx(
-          "inline-flex items-center gap-2 rounded-lg border border-border bg-surface-raised px-3 py-1.5 text-xs font-medium transition-colors",
-          busy ? "cursor-wait text-muted" : "hover:bg-surface-hover hover:border-border-strong",
+          "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+          force
+            ? "border-warning/40 bg-[rgba(251,191,36,0.06)] text-warning hover:bg-[rgba(251,191,36,0.12)]"
+            : "border-border bg-surface-raised hover:bg-surface-hover hover:border-border-strong",
+          busy && "cursor-wait opacity-60",
         )}
       >
-        <RefreshCw size={13} className={busy ? "animate-spin" : ""} />
-        {busy ? "Refreshing…" : "Refresh now"}
+        {force ? (
+          <Zap size={13} className={busy ? "animate-pulse" : ""} />
+        ) : (
+          <RefreshCw size={13} className={busy ? "animate-spin" : ""} />
+        )}
+        {busy ? "Refreshing…" : (label ?? "Refresh now")}
       </button>
     </div>
   );

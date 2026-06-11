@@ -11,7 +11,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { SourceStatusPanel } from "@/components/dashboard/source-status";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
-import { RefreshButton } from "@/components/ui/refresh-button";
+import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { DataNotice } from "@/components/layout/data-notice";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
@@ -170,7 +170,7 @@ export default async function DashboardPage({
               Cybernick0x × Wachter
             </h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-              <span>Cross-platform campaign tracker</span>
+              <span>Cross-platform campaign tracker · shared live view for all viewers</span>
               <span aria-hidden className="text-muted-strong">·</span>
               <span>
                 {data.dateRange.from
@@ -204,7 +204,7 @@ export default async function DashboardPage({
               anyFailed={anyFailed}
               hasGaps={hasGaps}
             />
-            <RefreshButton />
+            <AutoRefreshNote />
           </div>
         </div>
 

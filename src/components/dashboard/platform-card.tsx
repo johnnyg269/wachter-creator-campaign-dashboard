@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { PlatformBadge } from "@/components/ui/platform";
 import { StatusPill } from "@/components/ui/status";
 import { DeltaTag } from "@/components/ui/delta";
+import { describeCommentDelta } from "@/lib/format";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { formatCompact, formatDate, formatNumber, formatPct, truncate } from "@/lib/format";
 
@@ -15,6 +16,22 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="tabular text-sm font-medium">{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-muted-strong">{label}</div>
     </div>
+  );
+}
+
+function CommentDelta({ value }: { value: number | null }) {
+  const d = describeCommentDelta(value);
+  return (
+    <span
+      className={
+        d.tone === "positive"
+          ? "tabular text-[11px] font-medium text-positive"
+          : "text-[11px] text-muted-strong"
+      }
+      title={d.tooltip ?? undefined}
+    >
+      {d.text}
+    </span>
   );
 }
 
@@ -46,7 +63,7 @@ export function PlatformCard({ stats }: { stats: PlatformStats }) {
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-3">
         <DeltaTag value={stats.viewsGained24h} label="views 24h" />
-        <DeltaTag value={stats.commentsGained24h} label="comments 24h" />
+        <CommentDelta value={stats.commentsGained24h} />
       </div>
 
       <dl className="mt-auto space-y-1.5 border-t border-border pt-3 text-[11px]">

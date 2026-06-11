@@ -84,7 +84,12 @@ export default async function AdminPage() {
       <PageHeader
         title="Admin"
         subtitle="Internal controls — tracked links, refreshes, overrides, and Apify setup"
-        actions={<RefreshButton />}
+        actions={
+          <>
+            <RefreshButton />
+            <RefreshButton force label="Force refresh" />
+          </>
+        }
       />
 
       <nav className="mb-6 flex flex-wrap gap-2 text-xs">
@@ -148,7 +153,7 @@ export default async function AdminPage() {
               <ReadinessRow
                 ok={data.readiness.cronSecretSet}
                 label={`Cron: ${data.readiness.cronSecretSet ? "secret configured" : "CRON_SECRET missing"}`}
-                detail="Built-in daily cron (Hobby limit); 10-minute cadence via the Refresh Automation section below"
+                detail="GitHub Actions refreshes every 5 minutes; Vercel daily cron is the backstop"
               />
               <ReadinessRow
                 ok={data.readiness.adminPasswordSet}
@@ -178,14 +183,21 @@ export default async function AdminPage() {
           <Card>
             <CardHeader
               title="Refresh automation"
-              subtitle="The app is ready for 10-minute refreshes — schedule them from any external cron"
+              subtitle="Automatic refresh every 5 minutes via GitHub Actions — manual refresh stays admin-only"
             />
             <CardBody className="space-y-4 text-xs">
               {(() => {
-                const lastCron = data.refreshRuns.find((r) => r.trigger === "cron");
-                const lastManual = data.refreshRuns.find((r) => r.trigger !== "cron");
+                const lastCron = data.refreshRuns.find((r) => r.trigger === "cron" && r.status !== "skipped");
+                const lastManual = data.refreshRuns.find(
+                  (r) => (r.trigger === "manual" || r.trigger === "force") && r.status !== "skipped",
+                );
+                const activeLock = data.refreshRuns.find(
+                  (r) =>
+                    r.status === "running" &&
+                    Date.now() - new Date(r.startedAt).getTime() < 10 * 60 * 1000,
+                );
                 return (
-                  <div className="grid gap-2.5 sm:grid-cols-3">
+                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                     <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
                       <div className="text-[10px] uppercase tracking-wide text-muted-strong">
                         Last automated refresh
@@ -216,9 +228,31 @@ export default async function AdminPage() {
                     </div>
                     <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
                       <div className="text-[10px] uppercase tracking-wide text-muted-strong">
-                        Built-in schedule
+                        Scheduler
                       </div>
-                      <div className="mt-1 font-medium">Daily 06:00 UTC (Vercel Hobby limit)</div>
+                      <div className="mt-1 font-medium">
+                        GitHub Actions · every 5 minutes
+                        <span className="block text-[10px] font-normal text-muted-strong">
+                          + Vercel daily 06:00 UTC backstop
+                        </span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
+                        Refresh lock
+                      </div>
+                      <div className="mt-1 font-medium">
+                        {activeLock ? (
+                          <span className="text-accent">
+                            Locked — {activeLock.trigger} refresh in progress
+                          </span>
+                        ) : (
+                          <span className="text-positive">Unlocked</span>
+                        )}
+                        <span className="block text-[10px] font-normal text-muted-strong">
+                          One refresh at a time · stale locks expire after 10 min
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -235,7 +269,10 @@ export default async function AdminPage() {
                 </code>
                 <p className="mt-1 text-[11px] text-muted-strong">
                   Use the CRON_SECRET value from the Vercel environment variables — it is never
-                  displayed here. Recommended schedule: every 10 minutes (<code>*/10 * * * *</code>).
+                  displayed here. Active schedule: every 5 minutes (<code>*/5 * * * *</code>) via GitHub Actions.
+                  Overlaps are impossible — a database-backed lock skips concurrent runs, and
+                  manual refreshes within 3 minutes of a success are declined (Force refresh
+                  bypasses the freshness check, never the lock).
                 </p>
               </div>
 
@@ -259,8 +296,8 @@ export default async function AdminPage() {
                   Option B — GitHub Actions (already in the repo)
                 </summary>
                 <p className="mt-2 text-muted">
-                  <code>.github/workflows/refresh.yml</code> runs every 10 minutes once the repo is
-                  pushed to GitHub. Add repo secret <code>CRON_SECRET</code> and repo variable{" "}
+                  <code>.github/workflows/refresh.yml</code> runs every 5 minutes (ACTIVE — repo is
+                  on GitHub with secrets configured). Add repo secret <code>CRON_SECRET</code> and repo variable{" "}
                   <code>APP_URL</code> under Settings → Secrets and variables → Actions. The secret
                   stays in GitHub Secrets — never in the workflow file.
                 </p>

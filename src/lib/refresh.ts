@@ -11,6 +11,7 @@ import type {
   NormalizedVideo,
   Platform,
   RefreshReport,
+  RefreshRun,
   Video,
 } from "./types";
 import { PLATFORMS } from "./types";
@@ -26,22 +27,129 @@ import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./al
 
 const globalForRefresh = globalThis as unknown as { __wachterRefreshing?: Promise<RefreshReport> };
 
+/** A crashed refresh's lock expires after this — nothing blocks forever. */
+export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
+/** Normal manual refreshes are pointless sooner than this after a success. */
+export const MANUAL_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
+
+export type RefreshTrigger = "manual" | "cron" | "script" | "force";
+
+export type RefreshGateDecision =
+  | { action: "run"; staleRunIds: string[] }
+  | { action: "skip"; kind: "locked" | "fresh"; reason: string; staleRunIds: string[] };
+
+/**
+ * Cross-process refresh gate, evaluated against persisted RefreshRuns (the
+ * database is the lock — works across serverless instances and schedulers):
+ *  - a "running" run younger than the TTL locks out EVERY trigger (no
+ *    overlapping Apify spend, ever)
+ *  - runs stuck "running" past the TTL are expired (crash recovery)
+ *  - plain manual refreshes within 3 minutes of a success are skipped;
+ *    "force" (admin-only) bypasses freshness but never the lock
+ */
+export function evaluateRefreshGate(
+  recentRuns: RefreshRun[],
+  trigger: RefreshTrigger,
+  now: Date = new Date(),
+): RefreshGateDecision {
+  const staleRunIds: string[] = [];
+  let lock: RefreshRun | null = null;
+  for (const r of recentRuns) {
+    if (r.status !== "running") continue;
+    const age = now.getTime() - new Date(r.startedAt).getTime();
+    if (age > REFRESH_LOCK_TTL_MS) staleRunIds.push(r.id);
+    else if (!lock) lock = r;
+  }
+  if (lock) {
+    return {
+      action: "skip",
+      kind: "locked",
+      reason: "Refresh already running, skipped.",
+      staleRunIds,
+    };
+  }
+  if (trigger === "manual") {
+    const lastSuccess = recentRuns
+      .filter((r) => r.status === "success" || r.status === "partial")
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    if (lastSuccess) {
+      const at = lastSuccess.finishedAt ?? lastSuccess.startedAt;
+      if (now.getTime() - new Date(at).getTime() < MANUAL_FRESHNESS_WINDOW_MS) {
+        return {
+          action: "skip",
+          kind: "fresh",
+          reason: "Data refreshed recently. Next automatic refresh will run shortly.",
+          staleRunIds,
+        };
+      }
+    }
+  }
+  return { action: "run", staleRunIds };
+}
+
 /** Serializes refreshes — a second trigger while one is running awaits it. */
-export function runRefresh(trigger: "manual" | "cron" | "script"): Promise<RefreshReport> {
+export function runRefresh(
+  trigger: RefreshTrigger,
+  opts: { force?: boolean } = {},
+): Promise<RefreshReport> {
   if (globalForRefresh.__wachterRefreshing) return globalForRefresh.__wachterRefreshing;
-  const p = doRefresh(trigger).finally(() => {
+  const effective: RefreshTrigger = opts.force && trigger === "manual" ? "force" : trigger;
+  const p = doRefresh(effective).finally(() => {
     globalForRefresh.__wachterRefreshing = undefined;
   });
   globalForRefresh.__wachterRefreshing = p;
   return p;
 }
 
-async function doRefresh(trigger: "manual" | "cron" | "script"): Promise<RefreshReport> {
+async function recordSkip(
+  store: Store,
+  trigger: RefreshTrigger,
+  decision: Extract<RefreshGateDecision, { action: "skip" }>,
+): Promise<RefreshReport> {
+  const now = new Date().toISOString();
+  const run = await store.createRefreshRun({
+    startedAt: now,
+    finishedAt: now,
+    status: "skipped",
+    trigger,
+    platformsAttempted: [],
+    videosUpdated: 0,
+    commentsUpdated: 0,
+    newVideosDiscovered: 0,
+    errors: [],
+    rawLog: [`skipped (${decision.kind}): ${decision.reason}`],
+  });
+  return {
+    runId: run.id,
+    startedAt: now,
+    finishedAt: now,
+    status: "skipped",
+    skipReason: decision.reason,
+    platforms: [],
+    errors: [],
+  };
+}
+
+async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   const { getStore } = await import("./store");
   const store = getStore();
   const campaign = await ensureSeedData(store);
   const startedAt = new Date().toISOString();
   const log: string[] = [];
+
+  // ── Refresh gate: expire crashed locks, then lock/freshness check ────────
+  const recent = await store.listRefreshRuns(10);
+  const decision = evaluateRefreshGate(recent, trigger);
+  for (const id of decision.staleRunIds) {
+    await store.updateRefreshRun(id, {
+      status: "failed",
+      finishedAt: startedAt,
+      errors: ["Refresh lock expired — run assumed crashed"],
+    });
+  }
+  if (decision.action === "skip") {
+    return recordSkip(store, trigger, decision);
+  }
 
   const run = await store.createRefreshRun({
     startedAt,
@@ -55,6 +163,32 @@ async function doRefresh(trigger: "manual" | "cron" | "script"): Promise<Refresh
     errors: [],
     rawLog: null,
   });
+
+  // Optimistic double-check: if another instance created a running run just
+  // before ours, the OLDER one wins and we bow out as skipped.
+  const concurrent = (await store.listRefreshRuns(10)).find(
+    (r) =>
+      r.id !== run.id &&
+      r.status === "running" &&
+      r.startedAt <= run.startedAt &&
+      new Date(startedAt).getTime() - new Date(r.startedAt).getTime() < REFRESH_LOCK_TTL_MS,
+  );
+  if (concurrent) {
+    await store.updateRefreshRun(run.id, {
+      status: "skipped",
+      finishedAt: new Date().toISOString(),
+      rawLog: ["skipped (locked): lost start race to a concurrent refresh"],
+    });
+    return {
+      runId: run.id,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: "skipped",
+      skipReason: "Refresh already running, skipped.",
+      platforms: [],
+      errors: [],
+    };
+  }
 
   const report: RefreshReport = {
     runId: run.id,
@@ -302,7 +436,7 @@ async function refreshPlatform(
     }
 
     log.push(
-      `${platform}: ${out.videosUpdated} video(s), ${out.commentsUpdated} new comment(s), ${out.newVideosDiscovered} discovered`,
+      `${platform}: ${out.videosUpdated} video(s), ${out.commentsUpdated} new comment(s), ${out.newVideosDiscovered} discovered, ${fetched.attempts.length} actor run(s)`,
     );
   } catch (e) {
     out.status = "failed";

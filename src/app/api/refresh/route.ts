@@ -1,30 +1,32 @@
-// Manual refresh endpoint (UI button). Long-running: Apify actor runs can
-// take a couple of minutes per platform.
+// Manual refresh endpoint — ADMIN ONLY. Public viewers read the shared
+// Supabase data; only the authenticated admin session (or the secret-protected
+// cron endpoint) can spend Apify credits. The refresh gate in lib/refresh.ts
+// additionally blocks overlaps and too-frequent manual runs.
 
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { runRefresh } from "@/lib/refresh";
-import { getStore } from "@/lib/store";
+import { checkAdminRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/** Public manual refresh is throttled — each refresh costs real actor runs. */
-const MIN_INTERVAL_MS = 5 * 60 * 1000;
-
-export async function POST(): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  const denied = checkAdminRequest(req);
+  if (denied) {
+    return NextResponse.json(
+      { ok: false, error: "Refreshes run automatically every 5 minutes. Admin sign-in is required for manual refresh." },
+      { status: 401 },
+    );
+  }
+  let force = false;
   try {
-    const [latest] = await getStore().listRefreshRuns(1);
-    if (latest && Date.now() - new Date(latest.startedAt).getTime() < MIN_INTERVAL_MS) {
-      const ageMin = Math.max(1, Math.round((Date.now() - new Date(latest.startedAt).getTime()) / 60000));
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `Data was refreshed ${ageMin} minute${ageMin === 1 ? "" : "s"} ago — try again shortly.`,
-        },
-        { status: 429 },
-      );
-    }
-    const report = await runRefresh("manual");
+    const body = (await req.json()) as { force?: boolean } | null;
+    force = body?.force === true;
+  } catch {
+    // no body — plain manual refresh
+  }
+  try {
+    const report = await runRefresh("manual", { force });
     return NextResponse.json({ ok: true, report });
   } catch (e) {
     return NextResponse.json(
