@@ -87,12 +87,28 @@ export function evaluateRefreshGate(
   return { action: "run", staleRunIds };
 }
 
-/** Serializes refreshes — a second trigger while one is running awaits it. */
+/**
+ * Single-flight entry point. A second trigger while one is running on the
+ * SAME instance returns a fast "skipped" report (consistent with the
+ * database gate that covers cross-instance overlap) instead of hanging the
+ * caller until the in-flight refresh finishes.
+ */
 export function runRefresh(
   trigger: RefreshTrigger,
   opts: { force?: boolean } = {},
 ): Promise<RefreshReport> {
-  if (globalForRefresh.__wachterRefreshing) return globalForRefresh.__wachterRefreshing;
+  if (globalForRefresh.__wachterRefreshing) {
+    const now = new Date().toISOString();
+    return Promise.resolve({
+      runId: "in-flight",
+      startedAt: now,
+      finishedAt: now,
+      status: "skipped",
+      skipReason: "Refresh already running, skipped.",
+      platforms: [],
+      errors: [],
+    });
+  }
   const effective: RefreshTrigger = opts.force && trigger === "manual" ? "force" : trigger;
   const p = doRefresh(effective).finally(() => {
     globalForRefresh.__wachterRefreshing = undefined;
