@@ -121,7 +121,9 @@ export default async function DashboardPage({
   const anyFailed = health.platforms.some((p) => p.sourceStatus === "refresh_failed");
   const hasGaps = data.sourceCapabilities.some((c) => c.live && c.gaps.length > 0);
   const lastRun = health.lastRun;
-  const updatedAt = lastRun?.finishedAt ?? null;
+  // While a refresh is mid-flight, data is at least as fresh as its start —
+  // better than flashing "Awaiting first refresh" over real numbers.
+  const updatedAt = lastRun?.finishedAt ?? lastRun?.startedAt ?? null;
   const trendHasData = data.trend.some((p) => p.views !== null);
 
   const fastestTitle = kpis.fastestGrowing

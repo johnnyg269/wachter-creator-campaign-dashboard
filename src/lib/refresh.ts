@@ -17,6 +17,7 @@ import { PLATFORMS } from "./types";
 import type { Store } from "./store/types";
 import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
+import { ApifyProvider } from "./providers/apify-provider";
 import { engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
@@ -222,13 +223,23 @@ async function refreshPlatform(
         status: readiness.sourceStatus === "demo" ? "demo" : "live",
       });
     }
-    if (config) {
-      await store.upsertProviderConfig({
-        ...config,
-        status: "live",
-        lastSuccessfulRefreshAt: capturedAt,
-      });
-    }
+    // Record the success on the platform's ProviderConfig — creating it when
+    // it doesn't exist yet (fresh database configured purely via env vars).
+    await store.upsertProviderConfig({
+      platform,
+      providerType: provider.providerType,
+      actorId: config?.actorId ?? (provider instanceof ApifyProvider ? provider.actorId() : null),
+      status: "live",
+      lastTestedAt: config?.lastTestedAt ?? null,
+      lastTestResult: config?.lastTestResult ?? null,
+      detectedFields: config?.detectedFields ?? [],
+      supportsMetadata: config?.supportsMetadata ?? true,
+      supportsMetrics: config?.supportsMetrics ?? true,
+      supportsComments: config?.supportsComments ?? provider.supportsComments,
+      supportsDiscovery: config?.supportsDiscovery ?? provider.supportsDiscovery,
+      inputOverride: config?.inputOverride ?? null,
+      lastSuccessfulRefreshAt: capturedAt,
+    });
 
     // If the campaign start date is still unknown, learn it from seed videos.
     if (!campaign.startDate) {

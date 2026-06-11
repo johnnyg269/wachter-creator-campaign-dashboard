@@ -18,14 +18,18 @@ export function RefreshButton({ className }: { className?: string }) {
     setMessage(null);
     try {
       const res = await fetch("/api/refresh", { method: "POST" });
-      const data = (await res.json()) as {
+      interface RefreshResponse {
         ok: boolean;
         error?: string;
         report?: { status: string; errors: string[] };
-      };
-      if (!data.ok) {
-        setMessage(data.error ?? "Refresh failed");
-      } else if (data.report) {
+      }
+      let data: RefreshResponse | null = null;
+      try {
+        data = (await res.json()) as RefreshResponse;
+      } catch {
+        data = null;
+      }
+      if (data?.ok && data.report) {
         const { status, errors } = data.report;
         setMessage(
           status === "success"
@@ -34,13 +38,23 @@ export function RefreshButton({ className }: { className?: string }) {
               ? `${status}: ${errors[0]}`
               : `Refresh ${status}`,
         );
+      } else if (data && !data.ok) {
+        setMessage(data.error ?? "Refresh failed");
+      } else {
+        // Gateway timed out the response, but long refreshes keep running
+        // server-side — re-pull the page shortly instead of crying wolf.
+        setMessage("Refresh running in background — updating shortly…");
+        setTimeout(() => router.refresh(), 30_000);
+        setTimeout(() => router.refresh(), 90_000);
       }
       router.refresh();
     } catch {
-      setMessage("Refresh request failed");
+      setMessage("Refresh running in background — updating shortly…");
+      setTimeout(() => router.refresh(), 30_000);
+      setTimeout(() => router.refresh(), 90_000);
     } finally {
       setBusy(false);
-      setTimeout(() => setMessage(null), 8000);
+      setTimeout(() => setMessage(null), 20_000);
     }
   }
 
