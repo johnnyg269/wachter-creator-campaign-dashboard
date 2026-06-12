@@ -14,10 +14,12 @@ import { DataNotice } from "@/components/layout/data-notice";
 import { Card, CardBody, CardHeader, SectionTitle } from "@/components/ui/card";
 import { DeltaTag } from "@/components/ui/delta";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PlatformBadge, PLATFORM_HEX } from "@/components/ui/platform";
+import { PlatformBadge } from "@/components/ui/platform";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { VideoThumb } from "@/components/ui/video-thumb";
-import { SimpleBarChart, type BarDatum } from "@/components/charts/bar-chart";
+import { engagements } from "@/lib/metrics";
+import type { Platform } from "@/lib/types";
+import { ConceptPerformance, type ConceptRow } from "./concept-performance";
 
 import { Expandable } from "./expandable";
 
@@ -34,13 +36,42 @@ export default async function EpisodesPage() {
   const withVideos = episodes.filter((e) => e.videos.length > 0);
   const assignedCount = withVideos.reduce((sum, e) => sum + e.videos.length, 0);
 
-  const chartRows: BarDatum[] = [...withVideos]
+  // Plain serializable rows for the client chart — per-platform totals are
+  // real confirmed sums; no raw actor payloads cross to the client.
+  const conceptRows: ConceptRow[] = [...withVideos]
     .sort((a, b) => (b.totalViews ?? -1) - (a.totalViews ?? -1))
-    .map((e) => ({
-      name: e.episode.name,
-      value: e.totalViews,
-      color: e.bestPlatform ? PLATFORM_HEX[e.bestPlatform] : undefined,
-    }));
+    .map((e) => {
+      const perPlatform: ConceptRow["perPlatform"] = {};
+      for (const m of e.videos) {
+        const p = m.video.platform as Platform;
+        const views = m.confirmed.views?.value ?? null;
+        const eng = m.latest ? engagements(m.latest) : null;
+        if (views === null && eng === null) continue;
+        const entry = perPlatform[p] ?? { views: 0, engagements: 0 };
+        if (views !== null) entry.views += views;
+        if (eng !== null) entry.engagements += eng;
+        perPlatform[p] = entry;
+      }
+      const top = e.topVideo;
+      return {
+        id: e.episode.id,
+        name: e.episode.name,
+        videoCount: e.videos.length,
+        perPlatform,
+        totalViews: e.totalViews,
+        totalEngagements: e.totalEngagements,
+        totalComments: e.totalComments,
+        engagementRate: e.avgEngagementRate,
+        topPlatform: e.bestPlatform,
+        topVideo: top
+          ? {
+              title: top.video.title ?? top.video.caption ?? "Untitled video",
+              url: top.video.originalUrl,
+              views: top.confirmed.views?.value ?? null,
+            }
+          : null,
+      };
+    });
 
   return (
     <div>
@@ -61,10 +92,10 @@ export default async function EpisodesPage() {
         <Card>
           <CardHeader
             title="Episode performance"
-            subtitle="Total views per concept across all platforms — bars take the color of the concept's best platform"
+            subtitle="Stacked by platform — see exactly which channels drove each concept"
           />
           <CardBody>
-            {chartRows.length === 0 ? (
+            {conceptRows.length === 0 ? (
               <EmptyState
                 icon={<Layers size={20} />}
                 title={
@@ -79,14 +110,80 @@ export default async function EpisodesPage() {
                 }
               />
             ) : (
-              <SimpleBarChart
-                data={chartRows}
-                layout="vertical"
-                height={Math.max(180, chartRows.length * 44 + 40)}
-              />
+              <ConceptPerformance rows={conceptRows} />
             )}
           </CardBody>
         </Card>
+
+        {/* Concept leaderboard — useful even when one concept dominates */}
+        {conceptRows.length > 1 && (
+          <Card>
+            <CardHeader
+              title="Concept leaderboard"
+              subtitle="Every concept ranked by total confirmed views"
+            />
+            <CardBody className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-muted-strong">
+                    <th className="py-2 pr-3 font-medium">#</th>
+                    <th className="py-2 pr-3 font-medium">Concept</th>
+                    <th className="py-2 pr-3 text-right font-medium">Views</th>
+                    <th className="py-2 pr-3 text-right font-medium">Videos</th>
+                    <th className="py-2 pr-3 font-medium">Top platform</th>
+                    <th className="py-2 pr-3 text-right font-medium">ER</th>
+                    <th className="py-2 font-medium">Best video</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {conceptRows.map((r, i) => (
+                    <tr key={r.id} className="transition-colors hover:bg-surface-hover/40">
+                      <td className="py-2 pr-3">
+                        <span
+                          className={
+                            i === 0
+                              ? "tabular flex h-5 w-5 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[11px] font-bold text-accent"
+                              : "tabular text-muted-strong"
+                          }
+                        >
+                          {i + 1}
+                        </span>
+                      </td>
+                      <td className="max-w-56 truncate py-2 pr-3 font-medium" title={r.name}>
+                        {r.name}
+                      </td>
+                      <td className="tabular py-2 pr-3 text-right font-semibold">
+                        {formatCompact(r.totalViews)}
+                      </td>
+                      <td className="tabular py-2 pr-3 text-right">{r.videoCount}</td>
+                      <td className="py-2 pr-3">
+                        {r.topPlatform ? <PlatformBadge platform={r.topPlatform} size="sm" /> : "—"}
+                      </td>
+                      <td className="tabular py-2 pr-3 text-right">
+                        {r.engagementRate !== null ? formatPct(r.engagementRate) : "—"}
+                      </td>
+                      <td className="max-w-64 truncate py-2">
+                        {r.topVideo ? (
+                          <a
+                            href={r.topVideo.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={r.topVideo.title}
+                            className="text-muted transition-colors hover:text-accent"
+                          >
+                            {r.topVideo.title}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardBody>
+          </Card>
+        )}
 
         {/* Episode cards */}
         {episodes.length === 0 ? (

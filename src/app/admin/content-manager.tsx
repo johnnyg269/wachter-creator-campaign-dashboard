@@ -204,6 +204,25 @@ export function ContentManager({
                           {v.isSeed && (
                             <span className="rounded border border-border px-1 text-[9px] text-muted-strong">SEED</span>
                           )}
+                          {/* Thumbnail diagnostic: proxied CDN / direct / fallback */}
+                          <span
+                            className={
+                              v.thumbnailUrl
+                                ? "rounded border border-border px-1 text-[9px] text-muted-strong"
+                                : "rounded border border-warning/40 px-1 text-[9px] text-warning"
+                            }
+                            title={
+                              v.thumbnailUrl
+                                ? `Thumbnail source: ${(() => { try { return new URL(v.thumbnailUrl).hostname; } catch { return "stored URL"; } })()}`
+                                : "No thumbnail extracted — platform fallback shown publicly"
+                            }
+                          >
+                            {v.thumbnailUrl
+                              ? /fbcdn|cdninstagram|tiktokcdn|ytimg|ggpht|googleusercontent|ttwstatic/.test(v.thumbnailUrl)
+                                ? "THUMB:PROXIED"
+                                : "THUMB:DIRECT"
+                              : "THUMB:FALLBACK"}
+                          </span>
                           <a href={v.originalUrl} target="_blank" rel="noopener noreferrer" aria-label="Open video">
                             <ExternalLink size={11} className="text-muted-strong hover:text-foreground" />
                           </a>

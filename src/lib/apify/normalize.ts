@@ -95,15 +95,61 @@ const CAPTION_PATHS = [
   // Facebook posts scraper nests caption text in message.text
   "message.text", "message",
 ];
+/**
+ * Prioritized thumbnail resolver paths. Order matters:
+ *  1. direct thumbnail/cover fields    2. nested attachment/media images
+ *  3. preferred_thumbnail fields       4. poster/picture variants
+ * Values that are clearly VIDEO urls (video CDNs / manifests) are rejected
+ * by isUsableThumbUrl below — a playable URL is never used as an image.
+ */
 const THUMB_PATHS = [
   "thumbnail", "thumbnailUrl", "cover", "coverUrl", "displayUrl", "imageUrl",
   "videoMeta.coverUrl", "covers.default", "covers.origin", "thumbnails.0.url",
-  "previewImage", "image", "displayResources.0.src",
-  // Facebook posts scraper
+  "previewImage", "previewImageUrl", "image", "displayResources.0.src",
+  // Facebook posts scraper — feed surface
   "short_form_video_context.playback_video.preferred_thumbnail.image.uri",
   "short_form_video_context.playback_video.thumbnailImage.uri",
   "short_form_video_context.video.first_frame_thumbnail",
+  // Facebook posts scraper — reel-page surface (nested media entries; this
+  // is the surface that previously produced NULL thumbnails)
+  "media.0.thumbnail",
+  "media.0.thumbnailImage.uri",
+  "media.0.preferred_thumbnail.image.uri",
+  "media.0.image.uri",
+  "media.0.photo_image.uri",
+  // Defensive variants seen across FB actor versions
+  "preferred_thumbnail.image.uri",
+  "thumbnailImage.uri",
+  "attachments.0.media.image.uri",
+  "attachments.0.media.thumbnail",
+  "full_picture", "picture", "pictureUrl",
+  "video.thumbnail", "video.image", "poster", "posterUrl",
 ];
+
+/** True when a candidate looks like an image we can safely display. */
+export function isUsableThumbUrl(url: string): boolean {
+  if (!/^https?:\/\//.test(url)) return false;
+  try {
+    const u = new URL(url);
+    // Never treat playable/video assets or manifests as images.
+    if (u.hostname.startsWith("video-") || u.hostname.startsWith("video.")) return false;
+    if (/\.(mp4|m3u8|mpd|webm|mov)(\?|$)/i.test(u.pathname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** First USABLE thumbnail URL + the path it came from (admin diagnostics). */
+export function resolveThumb(obj: Raw): { url: string; path: string } | null {
+  for (const p of THUMB_PATHS) {
+    const v = pick(obj, p);
+    if (typeof v === "string" && v.trim() !== "" && isUsableThumbUrl(v.trim())) {
+      return { url: v.trim(), path: p };
+    }
+  }
+  return null;
+}
 const DATE_PATHS = [
   "createTime", "createTimeISO", "timestamp", "takenAt", "taken_at",
   "publishedAt", "uploadDate", "date", "time", "postedAt", "publishedTime",
@@ -176,7 +222,7 @@ export function normalizeVideoItem(raw: Raw, platform: Platform): NormalizedVide
     externalVideoId,
     title: title ?? (caption ? caption.slice(0, 80) : null),
     caption: caption ?? null,
-    thumbnailUrl: firstString(obj, THUMB_PATHS),
+    thumbnailUrl: resolveThumb(obj)?.url ?? null,
     publishedAt: firstDate(obj, DATE_PATHS),
     authorName: firstString(obj, AUTHOR_NAME_PATHS),
     authorHandle: firstString(obj, AUTHOR_HANDLE_PATHS),

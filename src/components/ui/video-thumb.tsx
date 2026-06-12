@@ -9,7 +9,7 @@ import { useState } from "react";
 import clsx from "clsx";
 import type { Platform } from "@/lib/types";
 import { thumbSrc } from "@/lib/thumb-proxy";
-import { Clapperboard } from "lucide-react";
+import { Clapperboard, Film } from "lucide-react";
 
 const FALLBACK_GRADIENTS: Record<Platform, string> = {
   tiktok: "from-[#0e3b3a] to-[#11161f] text-tiktok",
@@ -27,9 +27,14 @@ function Fallback({ platform, className }: { platform: Platform; className?: str
         className ?? "h-14 w-10",
       )}
       role="img"
-      aria-label="Video thumbnail unavailable"
+      aria-label={platform === "facebook" ? "Facebook Reel — thumbnail unavailable" : "Video thumbnail unavailable"}
+      title={platform === "facebook" ? "Facebook Reel" : undefined}
     >
-      <Clapperboard size={16} className="opacity-70" />
+      {platform === "facebook" ? (
+        <Film size={16} className="opacity-75" />
+      ) : (
+        <Clapperboard size={16} className="opacity-70" />
+      )}
     </div>
   );
 }
