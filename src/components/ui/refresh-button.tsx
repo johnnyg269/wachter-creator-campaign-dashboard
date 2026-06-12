@@ -1,7 +1,7 @@
 "use client";
 
 // ADMIN-ONLY manual refresh trigger (the /api/refresh endpoint rejects
-// unauthenticated calls; public viewers rely on the 5-minute auto-refresh).
+// unauthenticated calls; public viewers rely on the scheduled auto-refresh).
 // Refreshes can take minutes, so the button shows a working state, reports
 // skip reasons ("refreshed recently", "already running") cleanly, and treats
 // gateway-timed-out responses as background completion.

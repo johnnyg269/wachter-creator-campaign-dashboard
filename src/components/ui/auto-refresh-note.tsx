@@ -1,7 +1,7 @@
 // Public replacement for the old refresh button: viewers don't trigger
 // anything — data updates on a schedule and everyone sees the same saved view.
 //
-// Honest by construction: the "every 5 minutes" claim renders only while the
+// Honest by construction: the cadence claim renders only while the
 // verified scheduler metadata says so AND the data is actually fresh. When
 // the last success ages past the thresholds the note degrades to a delayed
 // status instead of repeating a cadence promise the data contradicts.
@@ -79,7 +79,7 @@ export async function AutoRefreshNote({
       return (
         <span
           className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
-          title="Campaign data refreshes automatically on a 5-minute schedule. All viewers see the same saved data."
+          title={`Campaign data refreshes automatically about every ${SCHEDULER.cadenceMinutes} minutes during active hours. All viewers see the same saved data.`}
         >
           <span className="flex items-center gap-2">
             <span className="pulse-dot" aria-hidden />
@@ -96,7 +96,7 @@ export async function AutoRefreshNote({
     return (
       <span
         className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
-        title="Campaign data refreshes automatically on a 5-minute schedule. All viewers see the same saved data."
+        title={`Campaign data refreshes automatically about every ${SCHEDULER.cadenceMinutes} minutes during active hours. All viewers see the same saved data.`}
       >
         <RefreshCw size={12} className="text-muted-strong" aria-hidden />
         Auto-refreshes every {SCHEDULER.cadenceMinutes} minutes

@@ -56,14 +56,14 @@ export function coverageNote(
   const requested = RANGE_MS[range];
   // 5% slack: a 23.9-hour history fully covers a "24h" selection in spirit.
   if (availableMs >= requested * 0.95) return null;
-  return `Showing ${humanDuration(availableMs)} of verified history (since ${shortDateTime(historyStartIso)}) · more builds with each 5-minute refresh`;
+  return `Showing ${humanDuration(availableMs)} of verified history (since ${shortDateTime(historyStartIso)}) · more builds with each scheduled refresh`;
 }
 
 /** Empty/sparse-state explainer: when did tracking actually begin. */
 export function historyBeganNote(historyStartIso: string | null): string {
   return historyStartIso
-    ? `Historical tracking began ${shortDate(historyStartIso)}. More history will appear as scheduled refreshes run every 5 minutes.`
-    : "History will appear as scheduled refreshes run every 5 minutes.";
+    ? `Historical tracking began ${shortDate(historyStartIso)}. More history will appear as scheduled refreshes run.`
+    : "History will appear as scheduled refreshes run.";
 }
 
 /**

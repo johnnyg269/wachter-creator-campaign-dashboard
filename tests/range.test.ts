@@ -30,7 +30,7 @@ describe("coverageNote — honest history indicator", () => {
     const note = coverageNote("7d", hoursAgo(15), NOW);
     expect(note).toMatch(/Showing 15 hours of verified history/);
     expect(note).toMatch(/since Jun 1[12]/); // local-time render of the UTC instant
-    expect(note).toMatch(/more builds with each 5-minute refresh/);
+    expect(note).toMatch(/more builds with each scheduled refresh/);
     expect(coverageNote("30d", hoursAgo(15), NOW)).toMatch(/verified history/);
   });
   it("allows ~5% slack so 23.5h of history covers a 24h selection", () => {

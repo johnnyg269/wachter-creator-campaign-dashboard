@@ -156,7 +156,7 @@ export default async function AdminPage() {
               <ReadinessRow
                 ok={data.readiness.cronSecretSet}
                 label={`Cron: ${data.readiness.cronSecretSet ? "secret configured" : "CRON_SECRET missing"}`}
-                detail="cron-job.org refreshes every 5 minutes; GitHub Actions is a 30-min backup"
+                detail="cron-job.org pings every 30 min (06:00-23:59 ET); app policy runs a full refresh hourly"
               />
               <ReadinessRow
                 ok={data.readiness.adminPasswordSet}

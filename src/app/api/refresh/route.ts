@@ -14,7 +14,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const denied = checkAdminRequest(req);
   if (denied) {
     return NextResponse.json(
-      { ok: false, error: "Refreshes run automatically every 5 minutes. Admin sign-in is required for manual refresh." },
+      { ok: false, error: "Refreshes run automatically on a scheduled cadence. Admin sign-in is required for manual refresh." },
       { status: 401 },
     );
   }
