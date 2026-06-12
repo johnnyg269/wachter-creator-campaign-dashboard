@@ -91,12 +91,15 @@ curl -X POST "https://<your-app>.vercel.app/api/cron/refresh" \
   [cron-job.org](https://cron-job.org): create a job every 5 minutes,
   URL `https://<your-app>.vercel.app/api/cron/refresh`, request header
   `Authorization: Bearer <CRON_SECRET>`, timeout 300s.
-- **Current production setup**: cron-job.org job 7793727 ("Wachter Campaign
-  Dashboard Refresh") is the primary scheduler (every 5 minutes, POST, header
-  auth). GitHub Actions runs as a 30-minute best-effort backup — its 5-minute
-  schedule was removed after observed gaps of 1.4–2.2 hours. The endpoint
-  answers 202 instantly and refreshes in the background, so cron-job.org's
-  30-second free-tier cap never marks runs failed.
+- **Current production setup (cost-controlled)**: cron-job.org job 7793727
+  ("Wachter Campaign Dashboard Refresh") pings every 30 minutes during
+  active hours only (06:00–23:59 America/New_York). The app's refresh
+  policy (`src/lib/refresh-policy.ts`) decides what actually runs: full
+  refresh every 60 min, discovery every 180 min, comments every 120 min,
+  quiet hours 00:00–06:00 ET, and a daily Apify budget hard cap. The
+  5-minute cadence burned ~$20/day; the policy targets $1–2/day. GitHub
+  Actions remains a 30-minute best-effort backup (the same policy governs
+  it). The endpoint answers 202 instantly and refreshes in the background.
 
 ## 9. Share with your boss
 
