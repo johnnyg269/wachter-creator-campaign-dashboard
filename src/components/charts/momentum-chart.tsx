@@ -20,6 +20,7 @@ import {
   YAxis,
 } from "recharts";
 import type { TrendPoint } from "@/lib/metrics";
+import type { ChartRange } from "@/lib/range";
 import type { Platform } from "@/lib/types";
 import { PLATFORM_LABELS } from "@/lib/types";
 import { formatCompact, formatDelta } from "@/lib/format";
@@ -57,6 +58,21 @@ function shortTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/**
+ * Range-adaptive x-axis tick label. Exported for tests.
+ *  24h            → "8:51 PM" (times)
+ *  7d / 30d       → "Jun 9" (days; full timestamp lives in the tooltip)
+ *  all            → adapts to the real span: times under ~2 days, else days
+ */
+export function tickLabel(iso: string, range: ChartRange, spanMs: number): string {
+  const d = new Date(iso);
+  const useTime = range === "24h" || (range === "all" && spanMs <= 48 * 3_600_000);
+  if (useTime) {
+    return d.toLocaleString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+  return d.toLocaleString("en-US", { month: "short", day: "numeric" });
 }
 
 function buildRows(
@@ -161,10 +177,12 @@ export function MomentumChart({
   data,
   byPlatform,
   height = 340,
+  range = "7d",
 }: {
   data: TrendPoint[];
   byPlatform: Partial<Record<Platform, TrendPoint[]>>;
   height?: number;
+  range?: ChartRange;
 }) {
   const [metric, setMetric] = useState<Metric>("views");
   const rows = useMemo(() => buildRows(data, byPlatform), [data, byPlatform]);
@@ -172,6 +190,10 @@ export function MomentumChart({
   const withData = rows.filter((r) => r[metric] !== null);
   const last = withData[withData.length - 1] ?? null;
   const hasMetric = withData.length > 0;
+  const spanMs =
+    rows.length >= 2
+      ? new Date(rows[rows.length - 1].t).getTime() - new Date(rows[0].t).getTime()
+      : 0;
 
   return (
     <div>
@@ -242,7 +264,7 @@ export function MomentumChart({
             />
             <XAxis
               dataKey="t"
-              tickFormatter={shortTime}
+              tickFormatter={(t: string) => tickLabel(t, range, spanMs)}
               stroke="#5c6878"
               fontSize={10}
               tickLine={false}

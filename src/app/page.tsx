@@ -35,6 +35,7 @@ import { MomentumCard } from "@/components/dashboard/momentum-card";
 import { CommentIntelCard } from "@/components/dashboard/comment-intel-card";
 import { AlertsPreview } from "@/components/dashboard/alerts-preview";
 import { DataStatusDrawer } from "@/components/dashboard/data-status";
+import { coverageNote, historyBeganNote } from "@/lib/range";
 
 export const dynamic = "force-dynamic";
 
@@ -158,10 +159,6 @@ export default async function DashboardPage({
   const updatedAt = lastRun?.finishedAt ?? lastRun?.startedAt ?? null;
   const trendHasData = data.trend.some((p) => p.views !== null);
 
-  const fastestTitle = kpis.fastestGrowing
-    ? (kpis.fastestGrowing.video.title ?? kpis.fastestGrowing.video.caption ?? "Untitled video")
-    : null;
-
   // Narrative layer for the momentum card — real computed insights only.
   const shares = growthShares(data.trendByPlatform);
   const leader = shares[0] ?? null;
@@ -177,6 +174,9 @@ export default async function DashboardPage({
         ]
           .filter(Boolean)
           .join(" · ") || `Tracked totals over real snapshots · ${RANGE_LABELS[range]}`;
+
+  // Honest history coverage for the selected range.
+  const coverage = coverageNote(range, data.historyStart);
 
   // Best platform for the KPI strip — by total confirmed views.
   const totalPlatformViews = data.platformStats.reduce((a, s) => a + (s.views ?? 0), 0);
@@ -289,7 +289,16 @@ export default async function DashboardPage({
                 )}
               </span>
             }
-            subtitle={momentumNarrative}
+            subtitle={
+              coverage ? (
+                <>
+                  {momentumNarrative}
+                  <span className="mt-0.5 block text-[11px] text-muted-strong">{coverage}</span>
+                </>
+              ) : (
+                momentumNarrative
+              )
+            }
             action={<RangeSwitcher active={range} />}
           />
           <CardBody>
@@ -302,13 +311,17 @@ export default async function DashboardPage({
               <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-border bg-surface px-6 py-10 text-center">
                 <div className="text-sm font-medium text-muted">Tracking history is building</div>
                 <div className="max-w-md text-xs text-muted-strong">
-                  Metrics are captured on every refresh — the totals above are live now, and the
-                  trend line fills in as history accumulates.
+                  {historyBeganNote(data.historyStart)} The totals above are live now.
                 </div>
               </div>
             ) : (
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
-                <MomentumChart data={data.trend} byPlatform={data.trendByPlatform} height={360} />
+                <MomentumChart
+                  data={data.trend}
+                  byPlatform={data.trendByPlatform}
+                  height={360}
+                  range={range}
+                />
 
                 {/* Insight rail — the story beside the line */}
                 <div className="flex flex-col gap-2.5">
@@ -329,12 +342,21 @@ export default async function DashboardPage({
                     positive={(data.periodDelta.engagements ?? 0) > 0}
                   />
                   <RailStat
-                    label="Fastest-growing video"
-                    value={fastestTitle ? truncate(fastestTitle, 30) : "—"}
+                    label={`Fastest-growing video · ${RANGE_LABELS[range].toLowerCase()}`}
+                    value={
+                      data.periodFastestGrowing
+                        ? truncate(
+                            data.periodFastestGrowing.video.title ??
+                              data.periodFastestGrowing.video.caption ??
+                              "Untitled video",
+                            30,
+                          )
+                        : "—"
+                    }
                     sub={
-                      kpis.fastestGrowing
-                        ? `${formatDelta(kpis.fastestGrowing.gained24h)} views in 24h`
-                        : undefined
+                      data.periodFastestGrowing
+                        ? `${formatDelta(data.periodFastestGrowing.gained)} views this period`
+                        : "Needs two confirmed readings in range"
                     }
                   />
 

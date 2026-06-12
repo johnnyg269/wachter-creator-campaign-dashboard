@@ -43,6 +43,7 @@ import {
   type FreshnessLevel,
 } from "./executive";
 import { ensureSeedData } from "./seed";
+import { fastestGrowingInWindow } from "./range";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
@@ -274,6 +275,10 @@ export interface DashboardData {
   confidence: DataConfidence;
   /** Computed insight lines for the hero ("TikTok is driving the most views"). */
   insights: string[];
+  /** Earliest snapshot timestamp — when tracked history actually begins. */
+  historyStart: string | null;
+  /** Fastest-growing video WITHIN the selected range (not fixed-24h). */
+  periodFastestGrowing: { video: Video; gained: number } | null;
   platformStats: PlatformStats[];
   leaderboard: {
     mostViewed: VideoMetrics[];
@@ -393,10 +398,18 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     .slice(0, 5)
     .map((c) => ({ ...c, video: videoById.get(c.videoId) ?? null }));
 
+  const periodFastestGrowing = fastestGrowingInWindow(
+    videos.filter((v) => !v.hidden),
+    snapshotsByVideo,
+    from,
+  );
+
   return {
     campaign,
     health,
     kpis: { ...kpis, fastestGrowing },
+    historyStart: earliest,
+    periodFastestGrowing,
     trend,
     trendByPlatform,
     trendIsSparse: isSparseTrend(trend),
