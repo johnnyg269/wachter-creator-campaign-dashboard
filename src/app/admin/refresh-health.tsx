@@ -17,6 +17,7 @@ import {
   getRefreshPolicyConfig,
   isQuietHours,
   localDateKey,
+  nextActiveTime,
   summarizeBudget,
 } from "@/lib/refresh-policy";
 import { getStore } from "@/lib/store";
@@ -70,10 +71,13 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
   const lastQuietSkip = runs.find(
     (r) => r.status === "skipped" && r.rawLog?.[0]?.includes("quiet hours"),
   );
+  // "Next due" never advertises an overnight time the policy would skip —
+  // anything landing in quiet hours clamps to the 6:00 AM ET window end.
   const nextDue = (lastAt: string | null, intervalMin: number) =>
-    lastAt
-      ? new Date(new Date(lastAt).getTime() + intervalMin * 60_000).toISOString()
-      : new Date().toISOString();
+    nextActiveTime(
+      lastAt ? new Date(new Date(lastAt).getTime() + intervalMin * 60_000) : nowDate,
+      cfg,
+    ).toISOString();
 
   const attempts = runs.filter((r) => r.status !== "skipped");
   const lastAttempt = attempts[0] ?? null;

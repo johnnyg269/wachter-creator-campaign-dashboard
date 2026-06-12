@@ -12,6 +12,7 @@ import {
   getRefreshPolicyConfig,
   isQuietHours,
   localHour,
+  nextActiveTime,
   summarizeBudget,
   type RefreshPolicyConfig,
 } from "@/lib/refresh-policy";
@@ -93,6 +94,45 @@ describe("quiet hours (America/New_York, DST-safe)", () => {
       cfg: { ...CFG, quietHoursEnabled: false },
     });
     expect(d.action).toBe("run");
+  });
+});
+
+describe("midnight budget reset vs quiet hours (the order matters)", () => {
+  // 12:30 AM EDT on Jun 13 = 04:30 UTC. Budget day key has flipped (counter
+  // reset), but quiet hours must STILL block scheduled actor runs until 6 AM.
+  const PAST_MIDNIGHT = new Date("2026-06-13T04:30:00.000Z");
+  // 6:00 AM EDT = 10:00 UTC — first active moment.
+  const SIX_AM = new Date("2026-06-13T10:00:00.000Z");
+  it("after the midnight reset, scheduled runs STILL skip with 'quiet hours' (not budget)", () => {
+    const d = decideScheduledRefresh({
+      now: PAST_MIDNIGHT,
+      recentRuns: [],
+      todaysActorRuns: 0, // budget day reset — cap no longer the blocker
+      cfg: CFG,
+    });
+    expect(d.action).toBe("skip");
+    if (d.action === "skip") {
+      expect(d.kind).toBe("quiet");
+      expect(d.reason).toContain("Skipped: quiet hours");
+    }
+  });
+  it("scheduled scraping resumes at 6:00 AM ET, not midnight", () => {
+    expect(isQuietHours(PAST_MIDNIGHT, CFG)).toBe(true);
+    expect(isQuietHours(SIX_AM, CFG)).toBe(false);
+    const d = decideScheduledRefresh({
+      now: SIX_AM,
+      recentRuns: [],
+      todaysActorRuns: 0,
+      cfg: CFG,
+    });
+    expect(d.action).toBe("run");
+  });
+  it("nextActiveTime clamps overnight due-times to the 6 AM window end (admin display)", () => {
+    const clamped = nextActiveTime(PAST_MIDNIGHT, CFG);
+    expect(isQuietHours(clamped, CFG)).toBe(false);
+    expect(localHour(clamped, CFG.quietTimezone)).toBe(6);
+    // Active-hours times pass through untouched.
+    expect(nextActiveTime(SIX_AM, CFG).getTime()).toBe(SIX_AM.getTime());
   });
 });
 

@@ -236,6 +236,25 @@ export function classifyVideoHeat(args: {
   return "cold";
 }
 
+/**
+ * Clamp a prospective scheduled-run time into active hours: anything that
+ * lands inside the quiet window moves to the quiet-window end (6:00 AM ET)
+ * of that local day. Used for the admin "next due" display so it never
+ * advertises an overnight run that the policy would skip.
+ */
+export function nextActiveTime(at: Date, cfg: RefreshPolicyConfig): Date {
+  if (!cfg.quietHoursEnabled || !isQuietHours(at, cfg)) return at;
+  // Walk forward hour by hour until outside the window, then snap to :00.
+  // (Hour-resolution walk is DST-safe because isQuietHours re-derives the
+  // local hour via Intl at every step.)
+  let t = new Date(at);
+  for (let i = 0; i < 12 && isQuietHours(t, cfg); i++) {
+    t = new Date(t.getTime() + 60 * 60_000);
+  }
+  t.setMinutes(0, 0, 0);
+  return t;
+}
+
 /** Estimated spend summary for the admin cost panel. */
 export function summarizeBudget(args: {
   todaysActorRuns: number;
