@@ -59,8 +59,13 @@ function firstDate(obj: Raw, paths: string[]): string | null {
 }
 
 const VIEW_PATHS = [
-  "views", "viewCount", "playCount", "videoViewCount", "videoPlayCount",
-  "stats.playCount", "viewsCount", "video_view_count", "play_count",
+  // Play counts come FIRST: when a source exposes both (Instagram reels return
+  // videoViewCount AND videoPlayCount), the platform UI displays PLAYS — the
+  // stricter "view" metric reads roughly half of what leadership sees in the
+  // app, which made the dashboard look stale. (Root cause of Phase 3.3c.)
+  "videoPlayCount", "playCount", "plays", "clips_play_count", "play_count",
+  "views", "viewCount", "videoViewCount",
+  "stats.playCount", "viewsCount", "video_view_count",
   "shortViewCount", "viewCountText",
 ];
 const LIKE_PATHS = [
@@ -154,6 +159,16 @@ export function normalizeVideoItem(raw: Raw, platform: Platform): NormalizedVide
 
   const title = firstString(obj, TITLE_PATHS);
   const caption = firstString(obj, CAPTION_PATHS);
+
+  // Error stubs: actors emit {error, errorDescription, url} items for posts
+  // they couldn't fetch. A URL alone is not a video — don't ingest these.
+  if (
+    typeof obj.error === "string" &&
+    views === null && likes === null && comments === null &&
+    !title && !caption
+  ) {
+    return null;
+  }
 
   return {
     platform,

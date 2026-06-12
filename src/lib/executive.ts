@@ -108,3 +108,37 @@ export function computeInsights(input: {
   }
   return out.slice(0, 4);
 }
+
+export type FreshnessLevel = "high" | "partial" | "stale" | "failed";
+
+export interface PlatformFreshness {
+  level: FreshnessLevel;
+  /** Public-safe note, e.g. "data may be delayed". Null when high. */
+  note: string | null;
+}
+
+/**
+ * Per-platform metric freshness — distinct from "the refresh job ran":
+ *  high    — source verified within 10 minutes and not suspiciously frozen
+ *  partial — verified within 30 minutes, or fresh but the top video's views
+ *            are frozen across refreshes (source likely serving delayed data)
+ *  stale   — older than 30 minutes
+ *  failed  — the platform's latest refresh failed
+ */
+export function platformFreshness(input: {
+  failed: boolean;
+  verifiedAt: string | null;
+  topVideoFrozen: boolean;
+  now?: Date;
+}): PlatformFreshness {
+  const now = input.now ?? new Date();
+  if (input.failed) return { level: "failed", note: "latest refresh failed" };
+  if (!input.verifiedAt) return { level: "stale", note: "not verified yet" };
+  const ageMin = (now.getTime() - new Date(input.verifiedAt).getTime()) / 60_000;
+  if (ageMin > 30) return { level: "stale", note: "data may be delayed" };
+  if (input.topVideoFrozen) {
+    return { level: "partial", note: "metrics unchanged across recent refreshes — possibly delayed source" };
+  }
+  if (ageMin > 10) return { level: "partial", note: null };
+  return { level: "high", note: null };
+}

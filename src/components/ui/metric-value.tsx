@@ -7,7 +7,7 @@
 import clsx from "clsx";
 import type { ConfirmedValue } from "@/lib/metrics";
 import { formatCompact, timeAgo } from "@/lib/format";
-import { History } from "lucide-react";
+import { BadgeCheck, History } from "lucide-react";
 
 export function MetricValue({
   confirmed,
@@ -24,13 +24,18 @@ export function MetricValue({
       <span
         className={clsx("tabular inline-flex items-center gap-1", className)}
         title={
-          confirmed.stale
-            ? `Last confirmed ${timeAgo(confirmed.at)} — the source didn't report this metric on the latest refresh`
-            : undefined
+          confirmed.manual
+            ? `Manually verified ${timeAgo(confirmed.at)} by admin`
+            : confirmed.stale
+              ? `Last confirmed ${timeAgo(confirmed.at)} — the source didn't report this metric on the latest refresh`
+              : undefined
         }
       >
         {formatCompact(confirmed.value)}
-        {confirmed.stale && (
+        {confirmed.manual && (
+          <BadgeCheck size={10} className="text-accent" aria-label="Manually verified" />
+        )}
+        {!confirmed.manual && confirmed.stale && (
           <History size={10} className="text-muted-strong" aria-label="Last-confirmed value" />
         )}
       </span>

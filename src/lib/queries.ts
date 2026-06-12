@@ -27,13 +27,20 @@ import {
   computeVideoMetrics,
   deltaOverWindow,
   isSparseTrend,
+  isViewsFrozen,
   rankByConfirmedViews,
   sumNullable,
   type TrendPoint,
   type VideoMetrics,
 } from "./metrics";
 import { computeCompleteness, type Completeness } from "./completeness";
-import { computeConfidence, computeInsights, type DataConfidence } from "./executive";
+import {
+  computeConfidence,
+  computeInsights,
+  platformFreshness,
+  type DataConfidence,
+  type FreshnessLevel,
+} from "./executive";
 import { ensureSeedData } from "./seed";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
@@ -187,6 +194,12 @@ export interface SourceCapability {
   /** Specific gaps, e.g. ["views unavailable", "comments unavailable"] */
   gaps: string[];
   live: boolean;
+  /** When this platform's metrics were last verified against the source. */
+  verifiedAt: string | null;
+  /** Metric freshness — distinct from "the refresh job ran". */
+  freshness: FreshnessLevel;
+  /** Public-safe delay note, e.g. "data may be delayed". */
+  freshnessNote: string | null;
 }
 
 export function describeSourceCapability(
@@ -201,6 +214,9 @@ export function describeSourceCapability(
       summary: ph.statusDetail ?? "Not connected",
       gaps: ["not connected"],
       live: false,
+      verifiedAt: ph.lastSuccessfulRefreshAt,
+      freshness: ph.sourceStatus === "refresh_failed" ? "failed" : "stale",
+      freshnessNote: null,
     };
   }
   const viewsUnavailable = stats !== undefined && stats.videoCount > 0 && stats.views === null;
@@ -228,7 +244,16 @@ export function describeSourceCapability(
 
   let summary = (viewsUnavailable ? "Live engagement" : "Live metrics") + commentsPart;
   if (gaps.length > 0) summary += ` · ${gaps.join(" · ")}`;
-  return { platform: ph.platform, summary, gaps, live: true };
+  return {
+    platform: ph.platform,
+    summary,
+    gaps,
+    live: true,
+    // Freshness defaults — getDashboardData overrides with computed values.
+    verifiedAt: ph.lastSuccessfulRefreshAt,
+    freshness: "high",
+    freshnessNote: null,
+  };
 }
 
 export interface DashboardData {
@@ -362,11 +387,29 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     trend,
     trendIsSparse: isSparseTrend(trend),
     periodDelta,
-    sourceCapabilities: health.platforms.map((ph) =>
-      describeSourceCapability(ph, platformStats.find((s) => s.platform === ph.platform), {
-        youtubeKeySet: getYouTubeApiKey() !== null,
-      }),
-    ),
+    sourceCapabilities: health.platforms.map((ph) => {
+      const cap = describeSourceCapability(
+        ph,
+        platformStats.find((s) => s.platform === ph.platform),
+        { youtubeKeySet: getYouTubeApiKey() !== null },
+      );
+      if (!cap.live) return cap;
+      // Frozen check on the platform's top visible video: unchanged views
+      // across recent refreshes = the source may be serving delayed data.
+      const platformVideos = videos.filter((v) => v.platform === ph.platform);
+      const top = platformVideos
+        .map((v) => metricsByVideo.get(v.id))
+        .filter((m): m is VideoMetrics => Boolean(m))
+        .sort((a, b) => (b.confirmed.views?.value ?? -1) - (a.confirmed.views?.value ?? -1))[0];
+      const frozen = top ? isViewsFrozen(snapshotsByVideo.get(top.video.id) ?? [], now) : false;
+      const f = platformFreshness({
+        failed: ph.sourceStatus === "refresh_failed",
+        verifiedAt: ph.lastSuccessfulRefreshAt,
+        topVideoFrozen: frozen,
+        now,
+      });
+      return { ...cap, freshness: f.level, freshnessNote: f.note };
+    }),
     confidence: computeConfidence(all),
     insights: computeInsights({
       videosTracked: all.length,

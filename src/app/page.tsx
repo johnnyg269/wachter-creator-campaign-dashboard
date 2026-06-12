@@ -43,11 +43,13 @@ function SystemsIndicator({
   total,
   anyFailed,
   hasGaps,
+  delayed,
 }: {
   liveCount: number;
   total: number;
   anyFailed: boolean;
   hasGaps: boolean;
+  delayed: boolean;
 }) {
   const tone = anyFailed
     ? { dot: "bg-negative", text: "text-negative", label: `Refresh issues · ${liveCount}/${total} connected` }
@@ -72,6 +74,14 @@ function SystemsIndicator({
           title="Some platforms don't expose every metric — see Data sources below for details"
         >
           Some metrics unavailable
+        </span>
+      )}
+      {delayed && !anyFailed && (
+        <span
+          className="inline-flex items-center rounded-lg border border-warning/30 bg-[rgba(251,191,36,0.05)] px-2.5 py-1.5 text-[11px] text-warning/90 whitespace-nowrap"
+          title="A platform's source appears to be returning delayed metrics — see Data sources for detail"
+        >
+          Some platform data may be delayed
         </span>
       )}
     </span>
@@ -145,6 +155,9 @@ export default async function DashboardPage({
   const liveCount = health.platforms.filter((p) => p.sourceStatus === "live").length;
   const anyFailed = health.platforms.some((p) => p.sourceStatus === "refresh_failed");
   const hasGaps = data.sourceCapabilities.some((c) => c.live && c.gaps.length > 0);
+  const anyDelayed = data.sourceCapabilities.some(
+    (c) => c.live && (c.freshness === "stale" || c.freshnessNote !== null),
+  );
   const lastRun = health.lastRun;
   // While a refresh is mid-flight, data is at least as fresh as its start —
   // better than flashing "Awaiting first refresh" over real numbers.
@@ -203,6 +216,7 @@ export default async function DashboardPage({
               total={health.platforms.length}
               anyFailed={anyFailed}
               hasGaps={hasGaps}
+              delayed={anyDelayed}
             />
             <AutoRefreshNote />
           </div>

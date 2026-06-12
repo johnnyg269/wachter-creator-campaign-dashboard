@@ -193,6 +193,8 @@ export interface ConfirmedValue {
   value: number;
   at: string;
   stale: boolean;
+  /** True when the value came from an admin manual verification snapshot. */
+  manual: boolean;
 }
 
 export type ConfirmedMetrics = Record<
@@ -214,15 +216,27 @@ export interface VideoMetrics {
   growthSinceTracked: number | null;
 }
 
+function isManualSnapshot(s: MetricSnapshot): boolean {
+  return Boolean(s.rawJson && typeof s.rawJson === "object" && (s.rawJson as { manual?: boolean }).manual);
+}
+
+const MANUAL_OVERRIDE_TTL_MS = 24 * HOUR_MS;
+
 function lastConfirmed(
   sorted: MetricSnapshot[],
   field: "views" | "likes" | "comments" | "shares",
+  now: Date,
 ): ConfirmedValue | null {
   for (let i = sorted.length - 1; i >= 0; i--) {
     const v = sorted[i][field];
-    if (v !== null) {
-      return { value: v, at: sorted[i].capturedAt, stale: i < sorted.length - 1 };
+    if (v === null) continue;
+    const manual = isManualSnapshot(sorted[i]);
+    // Manual verifications expire after 24h — fall through to the newest
+    // automated value rather than displaying a day-old human-entered number.
+    if (manual && now.getTime() - new Date(sorted[i].capturedAt).getTime() > MANUAL_OVERRIDE_TTL_MS) {
+      continue;
     }
+    return { value: v, at: sorted[i].capturedAt, stale: i < sorted.length - 1, manual };
   }
   return null;
 }
@@ -240,10 +254,10 @@ export function computeVideoMetrics(
     video,
     latest,
     confirmed: {
-      views: lastConfirmed(allSorted, "views"),
-      likes: lastConfirmed(allSorted, "likes"),
-      comments: lastConfirmed(allSorted, "comments"),
-      shares: lastConfirmed(allSorted, "shares"),
+      views: lastConfirmed(allSorted, "views", now),
+      likes: lastConfirmed(allSorted, "likes", now),
+      comments: lastConfirmed(allSorted, "comments", now),
+      shares: lastConfirmed(allSorted, "shares", now),
     },
     engagements: latest ? engagements(latest) : null,
     engagementRate: latest ? engagementRate(latest) : null,
@@ -266,4 +280,39 @@ export function rankByConfirmedViews(list: VideoMetrics[]): VideoMetrics[] {
   return list
     .filter((m) => m.confirmed.views !== null)
     .sort((a, b) => (b.confirmed.views?.value ?? 0) - (a.confirmed.views?.value ?? 0));
+}
+
+/**
+ * Frozen-views detection: a fast-moving public video whose view count hasn't
+ * changed across the last few refreshes suggests the SOURCE is serving
+ * delayed data — confidence should drop to partial even though refreshes
+ * "succeed". True when ≥3 snapshots exist, the non-null views among the last
+ * 3 are all identical, and they span at least ~12 minutes.
+ */
+export function isViewsFrozen(snaps: MetricSnapshot[], now: Date = new Date()): boolean {
+  const sorted = sortSnapshots(snaps);
+  if (sorted.length < 3) return false;
+  const last3 = sorted.slice(-3);
+  const values = [...new Set(last3.map((s) => s.views).filter((v): v is number => v !== null))];
+  if (values.length !== 1) return false;
+  const spanMs = new Date(last3[2].capturedAt).getTime() - new Date(last3[0].capturedAt).getTime();
+  if (spanMs < 12 * 60 * 1000) return false;
+  // Only meaningful if the latest reading isn't ancient anyway
+  return now.getTime() - new Date(last3[2].capturedAt).getTime() < 2 * HOUR_MS;
+}
+
+/**
+ * Monotonic-views rule: public view counts don't decrease. A reading lower
+ * than the last confirmed value is stale/cached source output — record null
+ * (the display layer keeps the last confirmed value) and surface the
+ * rejected reading for logging.
+ */
+export function applyMonotonicViews(
+  newViews: number | null,
+  prevConfirmedViews: number | null,
+): { views: number | null; rejectedLower: number | null } {
+  if (newViews !== null && prevConfirmedViews !== null && newViews < prevConfirmedViews) {
+    return { views: null, rejectedLower: newViews };
+  }
+  return { views: newViews, rejectedLower: null };
 }

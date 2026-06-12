@@ -10,9 +10,10 @@ export type MetricKind = "views" | "likes" | "comments" | "shares";
 /** Exact field names (case-insensitive), strongest signal first. */
 const EXACT_NAMES: Record<MetricKind, string[]> = {
   views: [
+    // plays first — platform UIs display play counts for short-form video
+    "videoplaycount", "playcount", "play_count", "plays", "clips_play_count",
     "video_view_count", "videoviewcount", "viewscount", "viewcount", "views",
-    "playcount", "play_count", "plays", "totalvideoviews", "postviews",
-    "reelviews", "watchcount", "watch_count", "view_count", "videoplaycount",
+    "totalvideoviews", "postviews", "reelviews", "watchcount", "watch_count", "view_count",
   ],
   likes: [
     "likescount", "likecount", "like_count", "likes", "diggcount",

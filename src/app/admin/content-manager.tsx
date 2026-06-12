@@ -188,6 +188,7 @@ export function ContentManager({
                 <th className="py-1.5 pr-3 font-medium">Status</th>
                 <th className="py-1.5 pr-3 font-medium">Data</th>
                 <th className="py-1.5 pr-3 font-medium">Refreshed</th>
+                <th className="py-1.5 pr-3 font-medium">Verify</th>
                 <th className="py-1.5 font-medium">Visible</th>
               </tr>
             </thead>
@@ -303,6 +304,24 @@ export function ContentManager({
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap text-muted">
                     <TimeAgo iso={v.lastRefreshedAt} />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const res = await postJson("/api/admin/verify-video", "POST", { videoId: v.id });
+                          const r = res as { ok: boolean; error?: string; verified?: boolean; values?: { views: number | null }; rejectedLowerViews?: number | null };
+                          if (!r.ok) return { ok: false, error: r.error };
+                          if (!r.verified) return { ok: true };
+                          return { ok: true };
+                        }, "Verified — values updated")
+                      }
+                      title="Run a direct-URL verification for this video now (one collector run)"
+                      className="rounded border border-border bg-surface-raised px-2 py-1 text-[11px] hover:bg-surface-hover disabled:opacity-50"
+                    >
+                      Verify now
+                    </button>
                   </td>
                   <td className="py-2">
                     <button

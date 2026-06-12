@@ -19,6 +19,12 @@ export interface InputContext {
   videoUrls?: string[];
   /** Profile URL to discover from (kind="discover"). */
   profileUrl?: string;
+  /**
+   * Already-tracked video URLs to include alongside discovery, for actors
+   * whose input accepts both (Instagram): the direct-URL surface returns
+   * fresher per-video metrics than the profile feed, at no extra run cost.
+   */
+  knownVideoUrls?: string[];
   /** Only return posts published at/after this ISO date (when supported). */
   sinceIso?: string;
   /** Max results for discovery runs. */
@@ -49,7 +55,14 @@ const KNOWN_ACTORS: Record<
   // apify/instagram-reel-scraper — `username` array accepts profile or reel URLs
   xMc5Ga1oCONPmWJIa: (kind, ctx) => {
     const targets =
-      kind === "videos" ? (ctx.videoUrls ?? []) : ctx.profileUrl ? [ctx.profileUrl] : [];
+      kind === "videos"
+        ? (ctx.videoUrls ?? [])
+        : [
+            ...(ctx.profileUrl ? [ctx.profileUrl] : []),
+            // Direct reel URLs piggyback on the discovery run — the reel-page
+            // surface returns fresher play counts than the profile feed.
+            ...(ctx.knownVideoUrls ?? []),
+          ];
     if (targets.length === 0) return null;
     const input: Record<string, unknown> = {
       username: targets,

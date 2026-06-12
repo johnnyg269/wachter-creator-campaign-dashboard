@@ -68,6 +68,11 @@ export function SourceStatusPanel({
                 <span className={cap?.live ? "text-muted" : "text-warning"}>
                   {cap?.summary ?? "—"}
                 </span>
+                {cap?.freshnessNote && (
+                  <span className="text-[10px] text-warning/90" title={cap.freshnessNote}>
+                    · may be delayed
+                  </span>
+                )}
               </span>
             );
           })}
@@ -97,8 +102,14 @@ export function SourceStatusPanel({
                 </div>
                 <div className="mt-2 space-y-0.5 text-[10px] text-muted-strong">
                   <div>
-                    Last refresh: <TimeAgo iso={p.lastSuccessfulRefreshAt} />
+                    Verified: <TimeAgo iso={cap?.verifiedAt ?? p.lastSuccessfulRefreshAt} />
+                    {cap && cap.freshness !== "high" && cap.live && (
+                      <span className={cap.freshness === "failed" ? "ml-1 text-negative" : "ml-1 text-warning/90"}>
+                        ({cap.freshness === "partial" ? "possibly delayed" : cap.freshness})
+                      </span>
+                    )}
                   </div>
+                  {cap?.freshnessNote && <div className="text-warning/80">{cap.freshnessNote}</div>}
                   <div className="truncate">Source: {p.sourceLabel}</div>
                 </div>
               </div>

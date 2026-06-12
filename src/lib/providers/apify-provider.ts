@@ -91,6 +91,7 @@ export class ApifyProvider implements SocialPlatformProvider {
       profileUrl?: string;
       sinceIso?: string;
       limit?: number;
+      knownVideoUrls?: string[];
     },
     opts: { actorId?: string; attemptKind?: string; attempts?: AttemptDraft[] } = {},
   ): Promise<Array<Record<string, unknown>>> {
@@ -201,7 +202,18 @@ export class ApifyProvider implements SocialPlatformProvider {
       const margin = new Date(since.getTime() - 3 * 24 * 3600 * 1000);
       items = await this.runWithMeta(
         "discover",
-        { profileUrl: profile.profileUrl, sinceIso: margin.toISOString(), limit: 50 },
+        {
+          profileUrl: profile.profileUrl,
+          sinceIso: margin.toISOString(),
+          limit: 50,
+          // Instagram: ride direct reel URLs along with discovery — the
+          // reel-page surface is fresher than the profile feed (verified
+          // live in Phase 3.3c) and costs no extra actor run.
+          knownVideoUrls:
+            this.platform === "instagram"
+              ? videos.slice(0, 12).map((v) => v.originalUrl)
+              : undefined,
+        },
         { attempts: result.attempts },
       );
     }
@@ -263,8 +275,14 @@ export class ApifyProvider implements SocialPlatformProvider {
       );
 
     // Direct-URL follow-up for tracked videos the profile sweep didn't return
-    // (e.g. pinned exclusions, videos older than the date filter).
-    const missing = videos.filter((v) => !matchesTracked(v));
+    // (pinned exclusions, date-filter misses) — or returned WITHOUT a view
+    // count (profile feeds sometimes hand back stub items; the direct reel
+    // page is the fresher, more complete surface).
+    const entryViewsNull = (v: Video): boolean => {
+      const idx = entryIndex.get(v.externalVideoId ?? "") ?? entryIndex.get(v.originalUrl);
+      return idx !== undefined && result.videos[idx].views === null;
+    };
+    const missing = videos.filter((v) => !matchesTracked(v) || entryViewsNull(v));
     // YouTube shorts actor is channel-only; skip URL follow-up there.
     if (missing.length > 0 && this.platform !== "youtube") {
       try {

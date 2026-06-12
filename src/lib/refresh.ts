@@ -20,7 +20,7 @@ import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
 import { ApifyProvider } from "./providers/apify-provider";
 import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
-import { engagementRate } from "./metrics";
+import { applyMonotonicViews, engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
 import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./alerts";
@@ -376,16 +376,32 @@ async function refreshPlatform(
       const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out);
       if (!video) continue;
 
+      // Public view counts are monotonic — a LOWER reading than the last
+      // confirmed value is a stale/cached source response, not real decline.
+      // Record it as not-reported (null) so the display layer keeps the last
+      // confirmed value, and log the rejected reading for the audit trail.
+      const prev = (await store.listSnapshots(video.id))
+        .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+        .find((s) => s.views !== null);
+      const { views, rejectedLower } = applyMonotonicViews(n.views, prev?.views ?? null);
+      if (rejectedLower !== null) {
+        log.push(
+          `${platform}: rejected lower view count ${rejectedLower} < ${prev?.views} for ${
+            video.externalVideoId ?? video.id
+          } (source fluctuation — keeping last confirmed)`,
+        );
+      }
+
       await store.addSnapshot({
         videoId: video.id,
         capturedAt,
-        views: n.views,
+        views,
         likes: n.likes,
         comments: n.comments,
         shares: n.shares,
         saves: n.saves,
         bookmarks: n.bookmarks,
-        engagementRate: engagementRate(n),
+        engagementRate: engagementRate({ ...n, views }),
         rawJson: null, // raw payload already stored on the video
       });
       out.videosUpdated++;
