@@ -160,7 +160,7 @@ function MomentumTooltip({
 export function MomentumChart({
   data,
   byPlatform,
-  height = 300,
+  height = 340,
 }: {
   data: TrendPoint[];
   byPlatform: Partial<Record<Platform, TrendPoint[]>>;
@@ -229,15 +229,15 @@ export function MomentumChart({
           <AreaChart data={rows} margin={{ top: 10, right: 14, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id={meta.fillId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={meta.color} stopOpacity={0.3} />
-                <stop offset="55%" stopColor={meta.color} stopOpacity={0.07} />
+                <stop offset="0%" stopColor={meta.color} stopOpacity={0.34} />
+                <stop offset="45%" stopColor={meta.color} stopOpacity={0.1} />
                 <stop offset="100%" stopColor={meta.color} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid
               stroke="#1a2130"
-              strokeOpacity={0.5}
-              strokeDasharray="2 6"
+              strokeOpacity={0.35}
+              strokeDasharray="1 8"
               vertical={false}
             />
             <XAxis
@@ -268,7 +268,7 @@ export function MomentumChart({
               type="monotone"
               dataKey={metric}
               stroke={meta.color}
-              strokeWidth={2.25}
+              strokeWidth={2.5}
               fill={`url(#${meta.fillId})`}
               connectNulls={false}
               dot={false}

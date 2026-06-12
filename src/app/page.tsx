@@ -1,22 +1,28 @@
 // Main campaign dashboard — the 30-second executive read on the
 // Cybernick0x × Wachter creator campaign.
+//
+// Hierarchy (Phase 3.5): performance first, diagnostics last. Hero →
+// four-number KPI strip → the Campaign Momentum centerpiece → the content
+// that explains it (Top Videos, Platform comparison) → audience signals →
+// a collapsible Data status drawer with the full operational detail.
 
 import clsx from "clsx";
 import Link from "next/link";
-import {
-  Activity,
-  Eye,
-  Film,
-  Heart,
-  MessagesSquare,
-  TrendingUp,
-} from "lucide-react";
+import { Eye, Heart, TrendingUp, Trophy } from "lucide-react";
 import { getDashboardData, type TimeRange } from "@/lib/queries";
-import { PLATFORM_LABELS } from "@/lib/types";
-import { formatCompact, formatDate, formatDelta, formatNumber, formatPct, timeAgo, truncate } from "@/lib/format";
+import { PLATFORM_LABELS, type Platform } from "@/lib/types";
+import type { TrendPoint } from "@/lib/metrics";
+import {
+  formatCompact,
+  formatDate,
+  formatDelta,
+  formatNumber,
+  formatPct,
+  timeAgo,
+  truncate,
+} from "@/lib/format";
 import { Card, CardBody, CardHeader, SectionTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { SourceStatusPanel } from "@/components/dashboard/source-status";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
@@ -28,6 +34,7 @@ import { PlatformCard } from "@/components/dashboard/platform-card";
 import { MomentumCard } from "@/components/dashboard/momentum-card";
 import { CommentIntelCard } from "@/components/dashboard/comment-intel-card";
 import { AlertsPreview } from "@/components/dashboard/alerts-preview";
+import { DataStatusDrawer } from "@/components/dashboard/data-status";
 
 export const dynamic = "force-dynamic";
 
@@ -38,82 +45,38 @@ const RANGE_LABELS: Record<TimeRange, string> = {
   all: "All time",
 };
 
+const PLATFORM_HEX: Record<Platform, string> = {
+  tiktok: "#25f4ee",
+  youtube: "#ff4444",
+  instagram: "#e95daa",
+  facebook: "#4b8dff",
+};
+
 function parseRange(value: string | string[] | undefined): TimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "7d";
 }
 
-/** Which platform drove the largest share of view growth this period. */
-function growthLeader(
-  trendByPlatform: import("@/lib/queries").DashboardData["trendByPlatform"],
-): { platform: import("@/lib/types").Platform; pct: number } | null {
-  const deltas: Array<{ platform: import("@/lib/types").Platform; gained: number }> = [];
-  for (const [platform, series] of Object.entries(trendByPlatform)) {
+/** Per-platform share of view growth across the selected range. */
+function growthShares(
+  trendByPlatform: Partial<Record<Platform, TrendPoint[]>>,
+): Array<{ platform: Platform; gained: number; pct: number }> {
+  const deltas: Array<{ platform: Platform; gained: number }> = [];
+  for (const [platform, series] of Object.entries(trendByPlatform) as Array<
+    [Platform, TrendPoint[]]
+  >) {
     const withViews = (series ?? []).filter((pt) => pt.views !== null);
     const first = withViews[0];
     const last = withViews[withViews.length - 1];
     if (first && last && first !== last) {
       const gained = (last.views as number) - (first.views as number);
-      if (gained > 0) deltas.push({ platform: platform as import("@/lib/types").Platform, gained });
+      if (gained > 0) deltas.push({ platform, gained });
     }
   }
   const total = deltas.reduce((a, b) => a + b.gained, 0);
-  if (total <= 0) return null;
-  const top = deltas.sort((a, b) => b.gained - a.gained)[0];
-  return { platform: top.platform, pct: Math.round((top.gained / total) * 100) };
-}
-
-/**
- * Honest connection status: counts connected sources and flags metric gaps —
- * never claims "all systems live" while known fields are unavailable.
- */
-function SystemsIndicator({
-  liveCount,
-  total,
-  anyFailed,
-  hasGaps,
-  delayed,
-}: {
-  liveCount: number;
-  total: number;
-  anyFailed: boolean;
-  hasGaps: boolean;
-  delayed: boolean;
-}) {
-  const tone = anyFailed
-    ? { dot: "bg-negative", text: "text-negative", label: `Refresh issues · ${liveCount}/${total} connected` }
-    : liveCount === total && total > 0
-      ? { dot: "bg-positive", text: "text-positive", label: `${total} data sources connected` }
-      : { dot: "bg-warning", text: "text-warning", label: `${liveCount}/${total} data sources connected` };
-  return (
-    <span className="flex flex-wrap items-center justify-end gap-1.5">
-      <span
-        className={clsx(
-          "inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium whitespace-nowrap",
-          tone.text,
-        )}
-        role="status"
-      >
-        <span className={clsx("h-2 w-2 rounded-full", tone.dot, !anyFailed && liveCount > 0 && "animate-pulse")} />
-        {tone.label}
-      </span>
-      {hasGaps && !anyFailed && (
-        <span
-          className="inline-flex items-center rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] text-muted whitespace-nowrap"
-          title="Some platforms don't expose every metric — see Data sources below for details"
-        >
-          Some metrics unavailable
-        </span>
-      )}
-      {delayed && !anyFailed && (
-        <span
-          className="inline-flex items-center rounded-lg border border-warning/30 bg-[rgba(251,191,36,0.05)] px-2.5 py-1.5 text-[11px] text-warning/90 whitespace-nowrap"
-          title="A platform's source appears to be returning delayed metrics — see Data sources for detail"
-        >
-          Some platform data may be delayed
-        </span>
-      )}
-    </span>
-  );
+  if (total <= 0) return [];
+  return deltas
+    .sort((a, b) => b.gained - a.gained)
+    .map((d) => ({ ...d, pct: Math.round((d.gained / total) * 100) }));
 }
 
 function ConfidenceBadge({
@@ -121,12 +84,12 @@ function ConfidenceBadge({
 }: {
   confidence: import("@/lib/executive").DataConfidence;
 }) {
+  // "partial" now means core metrics ARE verified (some counts from a prior
+  // refresh) — styled calm, not as a warning. Only "building" gets accent.
   const tone =
-    confidence.level === "high"
-      ? { dot: "bg-positive", text: "text-positive" }
-      : confidence.level === "partial"
-        ? { dot: "bg-warning", text: "text-warning" }
-        : { dot: "bg-accent", text: "text-accent" };
+    confidence.level === "high" || confidence.level === "partial"
+      ? { dot: "bg-positive", text: "text-foreground/85" }
+      : { dot: "bg-accent", text: "text-accent" };
   return (
     <span
       className={clsx(
@@ -142,7 +105,8 @@ function ConfidenceBadge({
   );
 }
 
-function PeriodStat({
+/** One stat in the momentum card's insight rail. */
+function RailStat({
   label,
   value,
   sub,
@@ -154,47 +118,20 @@ function PeriodStat({
   positive?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-strong">{label}</div>
+    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-strong">
+        {label}
+      </div>
       <div
         className={clsx(
-          "tabular mt-0.5 truncate text-sm font-semibold",
+          "tabular-nums mt-1 truncate text-lg font-bold leading-tight tracking-tight",
           positive ? "text-positive" : "text-foreground",
         )}
         title={value}
       >
         {value}
       </div>
-      {sub && <div className="tabular text-[10px] text-muted">{sub}</div>}
-    </div>
-  );
-}
-
-function HeroStat({
-  label,
-  value,
-  emphasis,
-  positive,
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-  positive?: boolean;
-}) {
-  return (
-    <div className="flex flex-col">
-      <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-strong">
-        {label}
-      </span>
-      <span
-        className={clsx(
-          "tabular-nums font-bold leading-tight tracking-tight",
-          emphasis ? "text-xl" : "text-base",
-          positive ? "text-positive" : "text-foreground",
-        )}
-      >
-        {value}
-      </span>
+      {sub && <div className="mt-0.5 truncate text-[11px] text-muted">{sub}</div>}
     </div>
   );
 }
@@ -226,7 +163,8 @@ export default async function DashboardPage({
     : null;
 
   // Narrative layer for the momentum card — real computed insights only.
-  const leader = growthLeader(data.trendByPlatform);
+  const shares = growthShares(data.trendByPlatform);
+  const leader = shares[0] ?? null;
   const momentumNarrative = !trendHasData
     ? "Tracked totals will plot here after the first refresh"
     : data.trendIsSparse
@@ -240,134 +178,62 @@ export default async function DashboardPage({
           .filter(Boolean)
           .join(" · ") || `Tracked totals over real snapshots · ${RANGE_LABELS[range]}`;
 
+  // Best platform for the KPI strip — by total confirmed views.
+  const totalPlatformViews = data.platformStats.reduce((a, s) => a + (s.views ?? 0), 0);
+  const bestPlatform = [...data.platformStats]
+    .filter((s) => s.views !== null)
+    .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
+
   return (
     <div>
       <DataNotice health={health} />
 
-      {/* Executive hero — the 10-second story */}
-      <div className="mb-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">
-              Campaign performance
-            </div>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight lg:text-[28px]">
-              Cybernick0x × Wachter
-            </h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-              <span>Cross-platform campaign tracker · shared live view for all viewers</span>
-              <span aria-hidden className="text-muted-strong">·</span>
-              <span>
-                {data.dateRange.from
-                  ? `Since ${formatDate(data.dateRange.from)}`
-                  : "Start date pending first refresh"}
-              </span>
-              <span aria-hidden className="text-muted-strong">·</span>
-              <span>
-                Last refreshed{" "}
-                <TimeAgo iso={lastRun ? (lastRun.finishedAt ?? lastRun.startedAt) : null} />
-                {lastRun && lastRun.status !== "success" && (
-                  <span
-                    className={clsx(
-                      "ml-1 font-medium",
-                      lastRun.status === "failed" && "text-negative",
-                      lastRun.status === "partial" && "text-warning",
-                      lastRun.status === "running" && "text-accent",
-                    )}
-                  >
-                    ({lastRun.status})
-                  </span>
-                )}
-              </span>
-            </div>
+      {/* Hero — title left, one compact status cluster right. Operational
+          chips live in the Data status drawer at the bottom of the page. */}
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">
+            Campaign performance
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <ConfidenceBadge confidence={data.confidence} />
-            <SystemsIndicator
-              liveCount={liveCount}
-              total={health.platforms.length}
-              anyFailed={anyFailed}
-              hasGaps={hasGaps}
-              delayed={anyDelayed}
-            />
-            <AutoRefreshNote />
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight lg:text-[28px]">
+            Cybernick0x × Wachter
+          </h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+            <span>Cross-platform creator campaign</span>
+            <span aria-hidden className="text-muted-strong">·</span>
+            <span>
+              {data.dateRange.from
+                ? `Since ${formatDate(data.dateRange.from)}`
+                : "Start date pending first refresh"}
+            </span>
+            <span aria-hidden className="text-muted-strong">·</span>
+            <span>
+              Last refreshed{" "}
+              <TimeAgo iso={lastRun ? (lastRun.finishedAt ?? lastRun.startedAt) : null} />
+              {lastRun && lastRun.status !== "success" && (
+                <span
+                  className={clsx(
+                    "ml-1 font-medium",
+                    lastRun.status === "failed" && "text-negative",
+                    lastRun.status === "partial" && "text-warning",
+                    lastRun.status === "running" && "text-accent",
+                  )}
+                >
+                  ({lastRun.status})
+                </span>
+              )}
+            </span>
           </div>
         </div>
-
-        {/* At-a-glance strip: the five numbers an executive asks for first. */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-border bg-surface/60 px-4 py-3">
-          <HeroStat
-            label="Total views"
-            value={kpis.totalViews !== null ? formatCompact(kpis.totalViews) : "—"}
-            emphasis
-          />
-          <HeroStat
-            label="Views 24h"
-            value={kpis.viewsGained24h !== null ? formatDelta(kpis.viewsGained24h) : "—"}
-            positive={(kpis.viewsGained24h ?? 0) > 0}
-          />
-          <HeroStat
-            label="Engagements"
-            value={kpis.totalEngagements !== null ? formatCompact(kpis.totalEngagements) : "—"}
-          />
-          <HeroStat label="Videos tracked" value={formatNumber(kpis.videosTracked)} />
-          <HeroStat
-            label="Platforms"
-            value={`${liveCount}/${health.platforms.length} live`}
-          />
-          <HeroStat
-            label="Response opportunities"
-            value={formatNumber(commentStats.needsResponse)}
-          />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ConfidenceBadge confidence={data.confidence} />
+          <AutoRefreshNote />
         </div>
-
-        {data.insights.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {data.insights.map((line) => (
-              <span
-                key={line}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-[11px] text-foreground/85"
-              >
-                <span aria-hidden className="h-1 w-1 rounded-full bg-accent" />
-                {line}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* Per-platform source status with expandable capability details.
-          SourceStatusPanel is a client component — its props serialize into
-          the public page payload, so only this sanitized projection (no actor
-          IDs, no provider/vendor names, no setup language) may cross. */}
-      <SourceStatusPanel
-        platforms={health.platforms.map((p) => ({
-          platform: p.platform,
-          sourceStatus: p.sourceStatus,
-          statusDetail:
-            p.sourceStatus === "live" || p.sourceStatus === "waiting"
-              ? null
-              : "Not connected — configure in Admin",
-          lastSuccessfulRefreshAt: p.lastSuccessfulRefreshAt,
-          supportsComments: p.supportsComments,
-          supportsDiscovery: p.supportsDiscovery,
-          sourceLabel:
-            p.providerType === "youtube_api"
-              ? "Official YouTube API"
-              : p.providerType === "mock"
-                ? "Demo data"
-                : p.providerType === "manual"
-                  ? "Manual entry"
-                  : "Automated collection",
-        }))}
-        capabilities={data.sourceCapabilities.map((c) =>
-          c.live ? c : { ...c, summary: "Not connected — configure in Admin" },
-        )}
-      />
-
       <div className="space-y-6">
-        {/* KPI grid — six intentional numbers, each with context */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        {/* Primary KPI strip — the four numbers leadership asks for first */}
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <KpiCard
             label="Total views"
             icon={<Eye />}
@@ -383,9 +249,7 @@ export default async function DashboardPage({
             context="New views in the last day"
             unavailableReason="Needs two snapshots"
             updatedAt={updatedAt}
-            accent={
-              kpis.viewsGained24h !== null && kpis.viewsGained24h > 0 ? "#34d399" : undefined
-            }
+            accent={kpis.viewsGained24h !== null && kpis.viewsGained24h > 0 ? "#34d399" : undefined}
           />
           <KpiCard
             label="Engagements"
@@ -398,81 +262,37 @@ export default async function DashboardPage({
             updatedAt={updatedAt}
           />
           <KpiCard
-            label="Engagement rate"
-            icon={<Activity />}
-            value={kpis.avgEngagementRate !== null ? formatPct(kpis.avgEngagementRate) : null}
-            context="Average across tracked videos"
-            unavailableReason="No engagement data yet"
-            updatedAt={updatedAt}
-          />
-          <KpiCard
-            label="Videos tracked"
-            icon={<Film />}
-            value={formatNumber(kpis.videosTracked)}
-            context={`Across ${health.platforms.length} platforms`}
-            updatedAt={updatedAt}
-          />
-          <KpiCard
-            label="Response opportunities"
-            icon={<MessagesSquare />}
-            value={formatNumber(commentStats.needsResponse)}
-            context="Comments awaiting a reply"
+            label="Top platform"
+            icon={<Trophy />}
+            value={bestPlatform ? PLATFORM_LABELS[bestPlatform.platform] : null}
+            context={
+              bestPlatform && totalPlatformViews > 0
+                ? `${Math.round(((bestPlatform.views ?? 0) / totalPlatformViews) * 100)}% of campaign views (${formatCompact(bestPlatform.views)})`
+                : undefined
+            }
+            unavailableReason="No confirmed views yet"
             updatedAt={updatedAt}
           />
         </div>
 
-        {/* Campaign momentum — the centerpiece chart with its story */}
+        {/* Campaign momentum — the centerpiece */}
         <Card>
           <CardHeader
-            title="Campaign momentum"
+            title={
+              <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                Campaign momentum
+                {kpis.totalViews !== null && (
+                  <span className="tabular-nums text-xl font-bold tracking-tight text-foreground">
+                    {formatCompact(kpis.totalViews)}
+                    <span className="ml-1.5 text-xs font-normal text-muted">views total</span>
+                  </span>
+                )}
+              </span>
+            }
             subtitle={momentumNarrative}
             action={<RangeSwitcher active={range} />}
           />
           <CardBody>
-            {trendHasData && (
-              <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-                <PeriodStat
-                  label={`Views gained · ${RANGE_LABELS[range].toLowerCase()}`}
-                  value={data.periodDelta.views !== null ? formatDelta(data.periodDelta.views) : "—"}
-                  positive={(data.periodDelta.views ?? 0) > 0}
-                />
-                <PeriodStat
-                  label="Engagements gained"
-                  value={
-                    data.periodDelta.engagements !== null
-                      ? formatDelta(data.periodDelta.engagements)
-                      : "—"
-                  }
-                  positive={(data.periodDelta.engagements ?? 0) > 0}
-                />
-                <PeriodStat
-                  label="Growth leader"
-                  value={
-                    leader
-                      ? `${PLATFORM_LABELS[leader.platform]}`
-                      : momentum.bestPlatformToday
-                        ? PLATFORM_LABELS[momentum.bestPlatformToday.platform]
-                        : "—"
-                  }
-                  sub={
-                    leader
-                      ? `${leader.pct}% of view growth this period`
-                      : momentum.bestPlatformToday
-                        ? `${formatDelta(momentum.bestPlatformToday.gained)} views today`
-                        : undefined
-                  }
-                />
-                <PeriodStat
-                  label="Fastest-growing video"
-                  value={fastestTitle ? truncate(fastestTitle, 26) : "—"}
-                  sub={
-                    kpis.fastestGrowing
-                      ? `${formatDelta(kpis.fastestGrowing.gained24h)} views 24h`
-                      : undefined
-                  }
-                />
-              </div>
-            )}
             {!trendHasData ? (
               <EmptyState
                 title="Waiting for first refresh"
@@ -487,40 +307,93 @@ export default async function DashboardPage({
                 </div>
               </div>
             ) : (
-              <MomentumChart data={data.trend} byPlatform={data.trendByPlatform} />
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+                <MomentumChart data={data.trend} byPlatform={data.trendByPlatform} height={360} />
+
+                {/* Insight rail — the story beside the line */}
+                <div className="flex flex-col gap-2.5">
+                  <RailStat
+                    label={`Views gained · ${RANGE_LABELS[range].toLowerCase()}`}
+                    value={
+                      data.periodDelta.views !== null ? formatDelta(data.periodDelta.views) : "—"
+                    }
+                    positive={(data.periodDelta.views ?? 0) > 0}
+                  />
+                  <RailStat
+                    label="Engagements gained"
+                    value={
+                      data.periodDelta.engagements !== null
+                        ? formatDelta(data.periodDelta.engagements)
+                        : "—"
+                    }
+                    positive={(data.periodDelta.engagements ?? 0) > 0}
+                  />
+                  <RailStat
+                    label="Fastest-growing video"
+                    value={fastestTitle ? truncate(fastestTitle, 30) : "—"}
+                    sub={
+                      kpis.fastestGrowing
+                        ? `${formatDelta(kpis.fastestGrowing.gained24h)} views in 24h`
+                        : undefined
+                    }
+                  />
+
+                  {/* Platform contribution to growth this period */}
+                  {shares.length > 0 && (
+                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-strong">
+                        Growth by platform
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {shares.map((s) => (
+                          <div key={s.platform}>
+                            <div className="flex items-baseline justify-between text-[11px]">
+                              <span className="text-muted">{PLATFORM_LABELS[s.platform]}</span>
+                              <span className="tabular-nums font-medium">
+                                {formatDelta(s.gained)}
+                                <span className="ml-1 text-muted-strong">{s.pct}%</span>
+                              </span>
+                            </div>
+                            <div className="mt-1 h-1 overflow-hidden rounded-full bg-surface-hover">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${Math.max(2, s.pct)}%`,
+                                  background: PLATFORM_HEX[s.platform],
+                                  opacity: 0.85,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {data.insights.length > 0 && (
+                    <div className="mt-auto space-y-1.5 pt-1">
+                      {data.insights.slice(0, 2).map((line) => (
+                        <div
+                          key={line}
+                          className="flex items-start gap-1.5 text-[11px] leading-snug text-muted"
+                        >
+                          <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent" />
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </CardBody>
         </Card>
 
-        {/* Platform comparison — ranked by views so the winner reads instantly */}
-        <section aria-label="Platform comparison">
-          <SectionTitle className="mb-3">Platform comparison</SectionTitle>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {(() => {
-              const totalViews = data.platformStats.reduce((a, s) => a + (s.views ?? 0), 0);
-              return [...data.platformStats]
-                .sort((a, b) => (b.views ?? -1) - (a.views ?? -1))
-                .map((s, i) => (
-                  <PlatformCard
-                    key={s.platform}
-                    stats={s}
-                    rank={i + 1}
-                    shareOfViews={
-                      totalViews > 0 && s.views !== null
-                        ? Math.round((s.views / totalViews) * 100)
-                        : null
-                    }
-                  />
-                ));
-            })()}
-          </div>
-        </section>
-
-        {/* Top videos */}
+        {/* Top videos — what's causing the line to move */}
         <Card>
           <CardHeader
             title="Top videos"
-            subtitle="Leaderboards across all platforms"
+            subtitle="The content behind the momentum"
             action={
               <Link
                 href="/videos"
@@ -535,7 +408,54 @@ export default async function DashboardPage({
           </CardBody>
         </Card>
 
-        {/* Momentum + comment intelligence */}
+        {/* Platform comparison — ranked by views so the winner reads instantly */}
+        <section aria-label="Platform comparison">
+          <SectionTitle className="mb-3">Platform comparison</SectionTitle>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[...data.platformStats]
+              .sort((a, b) => (b.views ?? -1) - (a.views ?? -1))
+              .map((s, i) => (
+                <PlatformCard
+                  key={s.platform}
+                  stats={s}
+                  rank={i + 1}
+                  shareOfViews={
+                    totalPlatformViews > 0 && s.views !== null
+                      ? Math.round((s.views / totalPlatformViews) * 100)
+                      : null
+                  }
+                />
+              ))}
+          </div>
+        </section>
+
+        {/* Supporting metrics — useful, but not top-of-page material */}
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <KpiCard
+            label="Engagement rate"
+            value={kpis.avgEngagementRate !== null ? formatPct(kpis.avgEngagementRate) : null}
+            context="Average across tracked videos"
+            unavailableReason="No engagement data yet"
+          />
+          <KpiCard
+            label="Total comments"
+            value={kpis.totalComments !== null ? formatCompact(kpis.totalComments) : null}
+            context="Captured across platforms"
+            unavailableReason="No connected source yet"
+          />
+          <KpiCard
+            label="Videos tracked"
+            value={formatNumber(kpis.videosTracked)}
+            context={`Across ${health.platforms.length} platforms`}
+          />
+          <KpiCard
+            label="Response opportunities"
+            value={formatNumber(commentStats.needsResponse)}
+            context="Comments awaiting a reply"
+          />
+        </div>
+
+        {/* Momentum velocity + audience signals */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <MomentumCard momentum={momentum} />
           <CommentIntelCard
@@ -544,6 +464,16 @@ export default async function DashboardPage({
             responseOpportunities={data.responseOpportunities}
           />
         </div>
+
+        {/* Operational truth — honest, complete, and one click away */}
+        <DataStatusDrawer
+          health={health}
+          capabilities={data.sourceCapabilities}
+          liveCount={liveCount}
+          anyFailed={anyFailed}
+          hasGaps={hasGaps}
+          delayed={anyDelayed}
+        />
 
         {/* Alerts preview */}
         <section aria-label="Open alerts">

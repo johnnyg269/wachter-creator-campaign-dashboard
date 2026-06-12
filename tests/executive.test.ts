@@ -29,10 +29,13 @@ describe("computeConfidence", () => {
     expect(c.detail).toBe("All tracked videos have confirmed view counts.");
     expect(c.verifiedAt).toBe("2026-06-11T11:00:00.000Z");
   });
-  it("is partial when some views are stale (last-confirmed)", () => {
+  it("is partial when some views are stale — worded calmly (core metrics verified)", () => {
     const c = computeConfidence([metricsWith(100), metricsWith(200, { stale: true })]);
     expect(c.level).toBe("partial");
-    expect(c.detail).toMatch(/1 video has views from a prior refresh/);
+    expect(c.headline).toBe("Core metrics verified");
+    expect(c.detail).toMatch(
+      /Every video has confirmed views; 1 is showing the count from a prior refresh/,
+    );
   });
   it("is building when a video has never-confirmed views", () => {
     const c = computeConfidence([metricsWith(100), metricsWith(null)]);

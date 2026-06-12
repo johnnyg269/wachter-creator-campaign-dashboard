@@ -51,10 +51,12 @@ export function computeConfidence(metrics: VideoMetrics[]): DataConfidence {
     };
   }
   if (stale.length > 0) {
+    // Core view counts ARE verified here — some are just from a prior
+    // refresh. Say so calmly; "partial confidence" reads like an outage.
     return {
       level: "partial",
-      headline: "Partial confidence",
-      detail: `${stale.length} video${stale.length === 1 ? " has" : "s have"} views from a prior refresh; the rest are current.`,
+      headline: "Core metrics verified",
+      detail: `Every video has confirmed views; ${stale.length} ${stale.length === 1 ? "is" : "are"} showing the count from a prior refresh until the next capture.`,
       verifiedAt,
     };
   }

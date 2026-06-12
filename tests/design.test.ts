@@ -65,3 +65,33 @@ describe("dashboard page", () => {
     expect(page).not.toContain("actorId");
   });
 });
+
+describe("homepage hierarchy (Phase 3.5)", () => {
+  const page = read("src/app/page.tsx");
+  it("the momentum chart sits above Top Videos, platform comparison, and all operational detail", () => {
+    const chart = page.indexOf("<MomentumChart");
+    expect(chart).toBeGreaterThan(0);
+    expect(chart).toBeLessThan(page.indexOf('title="Top videos"'));
+    expect(chart).toBeLessThan(page.indexOf('aria-label="Platform comparison"'));
+    expect(chart).toBeLessThan(page.indexOf("<DataStatusDrawer"));
+  });
+  it("operational source-status detail lives in the bottom drawer, not the hero", () => {
+    expect(page).not.toContain("SourceStatusPanel"); // moved into DataStatusDrawer
+    const drawer = page.indexOf("<DataStatusDrawer");
+    expect(drawer).toBeGreaterThan(page.indexOf('aria-label="Platform comparison"'));
+    const ds = read("src/components/dashboard/data-status.tsx");
+    expect(ds).toContain("SourceStatusPanel");
+    expect(ds).toContain("<details");
+  });
+  it("secondary KPIs (engagement rate, videos tracked, responses) render below the chart", () => {
+    const chart = page.indexOf("<MomentumChart");
+    expect(page.indexOf('label="Engagement rate"')).toBeGreaterThan(chart);
+    expect(page.indexOf('label="Videos tracked"')).toBeGreaterThan(chart);
+    expect(page.indexOf('label="Response opportunities"')).toBeGreaterThan(chart);
+  });
+  it("confidence wording is calm when core metrics are verified", () => {
+    const exec = read("src/lib/executive.ts");
+    expect(exec).toContain("Core metrics verified");
+    expect(exec).not.toContain('"Partial confidence"');
+  });
+});
