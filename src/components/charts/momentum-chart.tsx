@@ -1,18 +1,22 @@
 "use client";
 
-// Campaign momentum chart — the dashboard's centerpiece. Tells the growth
-// story rather than just plotting totals: gradient area clamped to real
-// history, a highlighted "now" marker on the latest reading, metric toggle
-// (views/engagements/comments), and a tooltip that breaks the total down by
-// platform with the gain since the previous snapshot. Gaps stay gaps — a
-// missing reading is never drawn as zero.
+// Campaign momentum chart — Phase 3.8.
+//
+// Default view shows PLATFORM CONTRIBUTION: soft stacked platform areas sit
+// beneath the dominant cumulative total line, so "who drove the growth" is
+// visible without opening any menu. A Total/Velocity mode toggle switches
+// between cumulative totals and per-interval growth (stacked platform bars
+// of real snapshot deltas — nothing smoothed, nothing invented). Up to two
+// surge annotations mark the biggest real jumps, attributed to the platform
+// that caused them. Gaps stay gaps — a missing reading is never drawn as 0.
 
 import { useMemo, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import {
   Area,
-  AreaChart,
+  Bar,
   CartesianGrid,
+  ComposedChart,
   ReferenceDot,
   ResponsiveContainer,
   Tooltip,
@@ -22,10 +26,11 @@ import {
 import type { TrendPoint } from "@/lib/metrics";
 import type { ChartRange } from "@/lib/range";
 import type { Platform } from "@/lib/types";
-import { PLATFORM_LABELS } from "@/lib/types";
+import { PLATFORM_LABELS, PLATFORMS } from "@/lib/types";
 import { formatCompact, formatDelta } from "@/lib/format";
 
 type Metric = "views" | "engagements" | "comments";
+type ChartMode = "total" | "velocity";
 
 const METRIC_META: Record<Metric, { label: string; color: string; fillId: string }> = {
   views: { label: "Views", color: "#60a5fa", fillId: "momFillViews" },
@@ -48,6 +53,9 @@ interface Row {
   comments: number | null;
   gained: Record<Metric, number | null>;
   byPlatform: Partial<Record<Platform, Record<Metric, number | null>>>;
+  gainedByPlatform: Partial<Record<Platform, Record<Metric, number | null>>>;
+  // Flattened keys for Recharts stacking, e.g. p_tiktok_views / g_tiktok_views.
+  [flat: string]: unknown;
 }
 
 function shortTime(iso: string): string {
@@ -75,30 +83,53 @@ export function tickLabel(iso: string, range: ChartRange, spanMs: number): strin
   return d.toLocaleString("en-US", { month: "short", day: "numeric" });
 }
 
+const METRICS: Metric[] = ["views", "engagements", "comments"];
+
 function buildRows(
   data: TrendPoint[],
   byPlatform: Partial<Record<Platform, TrendPoint[]>>,
 ): Row[] {
   const prev: Record<Metric, number | null> = { views: null, engagements: null, comments: null };
+  const prevPlatform = new Map<Platform, Record<Metric, number | null>>();
   return data.map((p, i) => {
     const gained: Record<Metric, number | null> = { views: null, engagements: null, comments: null };
-    for (const m of ["views", "engagements", "comments"] as Metric[]) {
+    for (const m of METRICS) {
       const v = p[m];
       if (v !== null && prev[m] !== null) gained[m] = v - (prev[m] as number);
       if (v !== null) prev[m] = v;
     }
     const rowPlatforms: Row["byPlatform"] = {};
+    const rowGains: Row["gainedByPlatform"] = {};
+    const flat: Record<string, number | null> = {};
     for (const [platform, series] of Object.entries(byPlatform) as Array<
       [Platform, TrendPoint[]]
     >) {
       const pt = series[i];
-      if (pt) {
-        rowPlatforms[platform] = {
-          views: pt.views,
-          engagements: pt.engagements,
-          comments: pt.comments,
-        };
+      if (!pt) continue;
+      const vals: Record<Metric, number | null> = {
+        views: pt.views,
+        engagements: pt.engagements,
+        comments: pt.comments,
+      };
+      rowPlatforms[platform] = vals;
+      const prevP =
+        prevPlatform.get(platform) ?? { views: null, engagements: null, comments: null };
+      const gains: Record<Metric, number | null> = {
+        views: null,
+        engagements: null,
+        comments: null,
+      };
+      for (const m of METRICS) {
+        const v = vals[m];
+        if (v !== null && prevP[m] !== null) gains[m] = v - (prevP[m] as number);
+        if (v !== null) prevP[m] = v;
+        flat[`p_${platform}_${m}`] = v;
+        // Velocity bars: only positive real deltas plot (a null stays a gap).
+        flat[`g_${platform}_${m}`] =
+          gains[m] !== null && (gains[m] as number) > 0 ? gains[m] : null;
       }
+      prevPlatform.set(platform, prevP);
+      rowGains[platform] = gains;
     }
     return {
       t: p.t,
@@ -108,40 +139,70 @@ function buildRows(
       comments: p.comments,
       gained,
       byPlatform: rowPlatforms,
+      gainedByPlatform: rowGains,
+      ...flat,
     };
   });
+}
+
+/** Top contributing platform for a row's interval gain (real deltas only). */
+function topContributor(row: Row, metric: Metric): { platform: Platform; gained: number } | null {
+  let best: { platform: Platform; gained: number } | null = null;
+  for (const [platform, gains] of Object.entries(row.gainedByPlatform) as Array<
+    [Platform, Record<Metric, number | null>]
+  >) {
+    const g = gains[metric];
+    if (g !== null && g > 0 && (!best || g > best.gained)) best = { platform, gained: g };
+  }
+  return best;
 }
 
 function MomentumTooltip({
   active,
   payload,
   metric,
+  mode,
 }: {
   active?: boolean;
   payload?: Array<{ payload?: Row }>;
   metric: Metric;
+  mode: ChartMode;
 }) {
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
-  const value = row[metric];
+  const value = row[metric] as number | null;
   const gained = row.gained[metric];
-  const breakdown = (Object.entries(row.byPlatform) as Array<
-    [Platform, Record<Metric, number | null>]
-  >)
-    .map(([platform, vals]) => ({ platform, value: vals[metric] }))
-    .filter((b) => b.value !== null)
-    .sort((a, b) => (b.value as number) - (a.value as number));
+  const top = topContributor(row, metric);
+  const platformRows = (
+    Object.entries(row.byPlatform) as Array<[Platform, Record<Metric, number | null>]>
+  )
+    .map(([platform, vals]) => ({
+      platform,
+      value: vals[metric],
+      gain: row.gainedByPlatform[platform]?.[metric] ?? null,
+    }))
+    .filter((b) => b.value !== null || b.gain !== null)
+    .sort((a, b) => (b.gain ?? 0) - (a.gain ?? 0) || (b.value ?? 0) - (a.value ?? 0));
+  const intervalTotalGain = platformRows.reduce((s, b) => s + Math.max(0, b.gain ?? 0), 0);
+
   return (
-    <div className="min-w-[180px] rounded-xl border border-border-strong bg-surface-raised/95 px-3.5 py-3 text-xs shadow-2xl backdrop-blur-sm">
+    <div className="min-w-[210px] rounded-xl border border-border-strong bg-surface-raised/95 px-3.5 py-3 text-xs shadow-2xl backdrop-blur-sm">
       <div className="text-[10px] font-medium uppercase tracking-wide text-muted-strong">
         {row.label}
       </div>
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="tabular-nums text-base font-semibold leading-none">
-          {formatCompact(value)}
+          {mode === "velocity"
+            ? gained !== null
+              ? formatDelta(gained)
+              : "—"
+            : formatCompact(value)}
         </span>
-        <span className="text-muted">{METRIC_META[metric].label.toLowerCase()}</span>
-        {gained !== null && gained !== 0 && (
+        <span className="text-muted">
+          {METRIC_META[metric].label.toLowerCase()}
+          {mode === "velocity" ? " this interval" : ""}
+        </span>
+        {mode === "total" && gained !== null && gained !== 0 && (
           <span
             className={clsx(
               "tabular-nums text-[11px] font-medium",
@@ -152,25 +213,89 @@ function MomentumTooltip({
           </span>
         )}
       </div>
-      {breakdown.length > 0 && (
+      {platformRows.length > 0 && (
         <div className="mt-2.5 space-y-1 border-t border-border pt-2">
-          {breakdown.map((b) => (
-            <div key={b.platform} className="flex items-center justify-between gap-4">
-              <span className="flex items-center gap-1.5 text-muted">
+          {platformRows.map((b) => {
+            const isTop = top !== null && b.platform === top.platform && (b.gain ?? 0) > 0;
+            const sharePct =
+              intervalTotalGain > 0 && b.gain !== null && b.gain > 0
+                ? Math.round((b.gain / intervalTotalGain) * 100)
+                : null;
+            return (
+              <div key={b.platform} className="flex items-center justify-between gap-3">
                 <span
-                  aria-hidden
-                  className="h-1.5 w-1.5 rounded-full"
-                  style={{ background: PLATFORM_COLORS[b.platform] }}
-                />
-                {PLATFORM_LABELS[b.platform]}
-              </span>
-              <span className="tabular-nums font-medium">{formatCompact(b.value)}</span>
+                  className={clsx(
+                    "flex items-center gap-1.5",
+                    isTop ? "font-semibold text-foreground" : "text-muted",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{ background: PLATFORM_COLORS[b.platform] }}
+                  />
+                  {PLATFORM_LABELS[b.platform]}
+                </span>
+                <span className="tabular-nums">
+                  {formatCompact(b.value)}
+                  {b.gain !== null && b.gain > 0 && (
+                    <span className="ml-1.5 text-positive">
+                      {formatDelta(b.gain)}
+                      {sharePct !== null && sharePct < 100 && (
+                        <span className="text-muted-strong"> ({sharePct}%)</span>
+                      )}
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+          {top && intervalTotalGain > 0 && (
+            <div className="pt-1 text-[10px] text-muted-strong">
+              {PLATFORM_LABELS[top.platform]} drove this interval
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Surge annotations: up to 2 biggest interval jumps for the current metric,
+ * excluding the latest point (the Now marker owns that). A jump qualifies
+ * only when it's at least 1.5× the average positive step — meaningful, not
+ * noise. Attributed to a platform when one caused >50% of the jump.
+ * Exported for tests.
+ */
+export function findSurges(
+  rows: Array<Pick<Row, "t" | "gained" | "gainedByPlatform">>,
+  metric: Metric,
+  lastT: string | null,
+): Array<{ t: string; label: string }> {
+  const positive = rows
+    .map((r) => r.gained[metric])
+    .filter((g): g is number => g !== null && g > 0);
+  if (positive.length < 3) return [];
+  const avg = positive.reduce((a, b) => a + b, 0) / positive.length;
+  return rows
+    .filter((r) => {
+      const g = r.gained[metric];
+      return g !== null && g >= avg * 1.5 && r.t !== lastT;
+    })
+    .sort((a, b) => (b.gained[metric] as number) - (a.gained[metric] as number))
+    .slice(0, 2)
+    .map((row) => {
+      const g = row.gained[metric] as number;
+      const top = topContributor(row as Row, metric);
+      const attributed = top !== null && top.gained / g > 0.5;
+      return {
+        t: row.t,
+        label: attributed
+          ? `+${formatCompact(g)} · ${PLATFORM_LABELS[top.platform]} spike`
+          : `+${formatCompact(g)} surge`,
+      };
+    });
 }
 
 export function MomentumChart({
@@ -185,6 +310,7 @@ export function MomentumChart({
   range?: ChartRange;
 }) {
   const [metric, setMetric] = useState<Metric>("views");
+  const [mode, setMode] = useState<ChartMode>("total");
   const reducedMotion = useSyncExternalStore(
     (onChange) => {
       const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -203,15 +329,6 @@ export function MomentumChart({
     rows.length >= 2
       ? new Date(rows[rows.length - 1].t).getTime() - new Date(rows[0].t).getTime()
       : 0;
-  // Largest single jump for the current metric — annotated on the line.
-  const biggestJump = useMemo(() => {
-    let best: Row | null = null;
-    for (const r of rows) {
-      const g = r.gained[metric];
-      if (g !== null && g > 0 && (!best || g > (best.gained[metric] as number))) best = r;
-    }
-    return best && (best.gained[metric] as number) > 0 ? best : null;
-  }, [rows, metric]);
   const timeTicks = range === "24h" || (range === "all" && spanMs <= 48 * 3_600_000);
   // Day-label mode: one tick per calendar day, never "Jun 11" repeated.
   const dayTicks = useMemo(() => {
@@ -228,29 +345,63 @@ export function MomentumChart({
     return out;
   }, [rows, timeTicks]);
 
+  const surges = useMemo(
+    () => (mode === "total" ? findSurges(rows, metric, last?.t ?? null) : []),
+    [rows, metric, mode, last],
+  );
+  const rowByT = useMemo(() => new Map(rows.map((r) => [r.t, r])), [rows]);
+  const platformsPresent = PLATFORMS.filter((p) => byPlatform[p]);
+  const velocityHasData = rows.some((r) =>
+    platformsPresent.some((p) => (r[`g_${p}_${metric}`] as number | null) !== null),
+  );
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
-          {(Object.keys(METRIC_META) as Metric[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMetric(m)}
-              aria-pressed={m === metric}
-              className={clsx(
-                "rounded-full px-3 py-1 text-[11px] font-medium transition-all duration-200",
-                m === metric
-                  ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
-                  : "text-muted hover:text-foreground",
-              )}
-            >
-              <span
-                className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
-                style={{ background: METRIC_META[m].color }}
-              />
-              {METRIC_META[m].label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
+            {(Object.keys(METRIC_META) as Metric[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMetric(m)}
+                aria-pressed={m === metric}
+                className={clsx(
+                  "rounded-full px-3 py-1 text-[11px] font-medium transition-all duration-200",
+                  m === metric
+                    ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
+                    : "text-muted hover:text-foreground",
+                )}
+              >
+                <span
+                  className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                  style={{ background: METRIC_META[m].color }}
+                />
+                {METRIC_META[m].label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
+            {(["total", "velocity"] as ChartMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                aria-pressed={m === mode}
+                title={
+                  m === "total"
+                    ? "Cumulative totals over time"
+                    : "Growth per interval — is momentum accelerating?"
+                }
+                className={clsx(
+                  "rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-all duration-200",
+                  m === mode
+                    ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
+                    : "text-muted hover:text-foreground",
+                )}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
         </div>
         {last && (
           <div className="flex items-baseline gap-1.5 text-xs text-muted">
@@ -266,29 +417,25 @@ export function MomentumChart({
             </span>
             Now:{" "}
             <span className="tabular-nums font-semibold text-foreground">
-              {formatCompact(last[metric])}
+              {formatCompact(last[metric] as number | null)}
             </span>
             {meta.label.toLowerCase()}
           </div>
         )}
       </div>
-      {!hasMetric ? (
+
+      {!hasMetric || (mode === "velocity" && !velocityHasData) ? (
         <div
-          className="flex items-center justify-center text-xs text-muted-strong"
+          className="flex items-center justify-center px-6 text-center text-xs text-muted-strong"
           style={{ height }}
         >
-          No {meta.label.toLowerCase()} data captured yet for this range.
+          {mode === "velocity"
+            ? "Velocity needs at least two readings per platform — interval growth will appear after the next refreshes."
+            : `No ${meta.label.toLowerCase()} data captured yet for this range.`}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={rows} margin={{ top: 10, right: 14, bottom: 0, left: 0 }}>
-            <defs>
-              <linearGradient id={meta.fillId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={meta.color} stopOpacity={0.34} />
-                <stop offset="45%" stopColor={meta.color} stopOpacity={0.1} />
-                <stop offset="100%" stopColor={meta.color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
+          <ComposedChart data={rows} margin={{ top: 18, right: 14, bottom: 0, left: 0 }}>
             <CartesianGrid
               stroke="#1a2130"
               strokeOpacity={0.35}
@@ -317,66 +464,123 @@ export function MomentumChart({
               tickFormatter={(v: number) => formatCompact(v)}
             />
             <Tooltip
-              content={<MomentumTooltip metric={metric} />}
+              content={<MomentumTooltip metric={metric} mode={mode} />}
               cursor={{ stroke: "#2a3447", strokeWidth: 1, strokeDasharray: "3 3" }}
             />
-            {/* Soft glow duplicate under the real line — pure presentation */}
-            {!reducedMotion && (
+
+            {mode === "total" && [
+              // Platform contribution: soft stacked bands under the line.
+              // The stack reveals slightly after the total line draws.
+              ...platformsPresent.map((p) => (
+                <Area
+                  key={`stack-${p}`}
+                  type="monotone"
+                  stackId="platforms"
+                  dataKey={`p_${p}_${metric}`}
+                  stroke={PLATFORM_COLORS[p]}
+                  strokeOpacity={0.35}
+                  strokeWidth={1}
+                  fill={PLATFORM_COLORS[p]}
+                  fillOpacity={0.16}
+                  connectNulls={false}
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={!reducedMotion}
+                  animationDuration={700}
+                  animationBegin={reducedMotion ? 0 : 500}
+                />
+              )),
+              !reducedMotion && (
+                <Area
+                  key="glow"
+                  type="monotone"
+                  dataKey={metric}
+                  stroke={meta.color}
+                  strokeWidth={5}
+                  fill="none"
+                  connectNulls={false}
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={false}
+                  className="chart-glow"
+                  tooltipType="none"
+                />
+              ),
               <Area
+                key="total"
                 type="monotone"
                 dataKey={metric}
                 stroke={meta.color}
-                strokeWidth={5}
+                strokeWidth={2.5}
                 fill="none"
                 connectNulls={false}
                 dot={false}
-                activeDot={false}
-                isAnimationActive={false}
-                className="chart-glow"
-                tooltipType="none"
-              />
-            )}
-            <Area
-              type="monotone"
-              dataKey={metric}
-              stroke={meta.color}
-              strokeWidth={2.5}
-              fill={`url(#${meta.fillId})`}
-              connectNulls={false}
-              dot={false}
-              activeDot={{ r: 4, strokeWidth: 0, fill: meta.color }}
-              isAnimationActive={!reducedMotion}
-              animationDuration={900}
-            />
-            {biggestJump && biggestJump.t !== last?.t && biggestJump[metric] !== null && (
-              <ReferenceDot
-                x={biggestJump.t}
-                y={biggestJump[metric] as number}
-                r={3.5}
-                fill="var(--background)"
-                stroke={meta.color}
-                strokeWidth={1.5}
-                label={{
-                  value: `+${formatCompact(biggestJump.gained[metric])}`,
-                  position: "top",
-                  fill: "#8b97a8",
-                  fontSize: 10,
-                }}
-              />
-            )}
-            {last && last[metric] !== null && (
-              <ReferenceDot
-                x={last.t}
-                y={last[metric] as number}
-                r={5}
-                fill={meta.color}
-                stroke="var(--background)"
-                strokeWidth={2.5}
-              />
-            )}
-          </AreaChart>
+                activeDot={{ r: 4, strokeWidth: 0, fill: meta.color }}
+                isAnimationActive={!reducedMotion}
+                animationDuration={900}
+              />,
+              ...surges.map((s) => {
+                const row = rowByT.get(s.t);
+                if (!row || row[metric] === null) return null;
+                return (
+                  <ReferenceDot
+                    key={`surge-${s.t}`}
+                    x={s.t}
+                    y={row[metric] as number}
+                    r={3.5}
+                    fill="var(--background)"
+                    stroke={meta.color}
+                    strokeWidth={1.5}
+                    label={{ value: s.label, position: "top", fill: "#8b97a8", fontSize: 10 }}
+                  />
+                );
+              }),
+              last && last[metric] !== null && (
+                <ReferenceDot
+                  key="now"
+                  x={last.t}
+                  y={last[metric] as number}
+                  r={5}
+                  fill={meta.color}
+                  stroke="var(--background)"
+                  strokeWidth={2.5}
+                />
+              ),
+            ]}
+            {mode === "velocity" &&
+              platformsPresent.map((p) => (
+                <Bar
+                  key={`vel-${p}`}
+                  stackId="gains"
+                  dataKey={`g_${p}_${metric}`}
+                  fill={PLATFORM_COLORS[p]}
+                  fillOpacity={0.75}
+                  isAnimationActive={!reducedMotion}
+                  animationDuration={700}
+                />
+              ))}
+          </ComposedChart>
         </ResponsiveContainer>
       )}
+
+      {/* Platform legend — always visible so the bands explain themselves */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
+        {platformsPresent.map((p) => (
+          <span key={p} className="flex items-center gap-1.5 text-[10px] text-muted-strong">
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ background: PLATFORM_COLORS[p] }}
+            />
+            {PLATFORM_LABELS[p]}
+          </span>
+        ))}
+        <span className="ml-auto text-[10px] text-muted-strong">
+          {mode === "total"
+            ? "Bands show each platform’s share of the total"
+            : "Bars show real growth per interval by platform"}
+        </span>
+      </div>
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CountUp } from "@/components/ui/count-up";
 import { EmptyState } from "@/components/ui/empty-state";
+import { VideoThumb } from "@/components/ui/video-thumb";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { DataNotice } from "@/components/layout/data-notice";
 import { MomentumChart } from "@/components/charts/momentum-chart";
@@ -414,22 +415,46 @@ export default async function DashboardPage({
                   </div>
                   <div className="py-3">
                     <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-strong">
-                      Fastest-growing post
+                      Growth leaders · {RANGE_LABELS[range].toLowerCase()}
                     </div>
-                    {data.periodFastestGrowing ? (
-                      <>
-                        <div className="mt-1 truncate text-sm font-semibold">
-                          {truncate(
-                            data.periodFastestGrowing.video.title ??
-                              data.periodFastestGrowing.video.caption ??
-                              "Untitled video",
-                            40,
-                          )}
-                        </div>
-                        <div className="tabular-nums text-[11px] text-positive">
-                          {formatDelta(data.periodFastestGrowing.gained)} views this period
-                        </div>
-                      </>
+                    {data.growthLeaders.length > 0 ? (
+                      <ul className="mt-2 space-y-2">
+                        {data.growthLeaders.map((g, i) => {
+                          const title = g.video.title ?? g.video.caption ?? "Untitled video";
+                          return (
+                            <li key={g.video.id} className="flex items-center gap-2.5">
+                              <VideoThumb
+                                src={g.video.thumbnailUrl}
+                                platform={g.video.platform}
+                                alt={title}
+                                className="h-9 w-7 shrink-0 rounded"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <a
+                                  href={g.video.originalUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={title}
+                                  className={clsx(
+                                    "block truncate text-xs transition-colors hover:text-accent",
+                                    i === 0 ? "font-semibold" : "font-medium text-foreground/85",
+                                  )}
+                                >
+                                  {truncate(title, 34)}
+                                </a>
+                                <div className="tabular-nums text-[10px] text-muted-strong">
+                                  <span className="text-positive">{formatDelta(g.gained)}</span>
+                                  {" · "}
+                                  {g.sharePct}% of growth
+                                  {g.currentViews !== null && (
+                                    <> · {formatCompact(g.currentViews)} total</>
+                                  )}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     ) : (
                       <div className="mt-1 text-xs text-muted-strong">
                         Needs two confirmed readings in range

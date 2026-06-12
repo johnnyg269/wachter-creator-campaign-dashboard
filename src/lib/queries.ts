@@ -43,7 +43,7 @@ import {
   type FreshnessLevel,
 } from "./executive";
 import { ensureSeedData } from "./seed";
-import { fastestGrowingInWindow } from "./range";
+import { fastestGrowingInWindow, topGrowersInWindow } from "./range";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
@@ -279,6 +279,13 @@ export interface DashboardData {
   historyStart: string | null;
   /** Fastest-growing video WITHIN the selected range (not fixed-24h). */
   periodFastestGrowing: { video: Video; gained: number } | null;
+  /** Top-3 growth leaders within the selected range, with share of growth. */
+  growthLeaders: Array<{
+    video: Video;
+    gained: number;
+    sharePct: number;
+    currentViews: number | null;
+  }>;
   platformStats: PlatformStats[];
   leaderboard: {
     mostViewed: VideoMetrics[];
@@ -398,11 +405,9 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     .slice(0, 5)
     .map((c) => ({ ...c, video: videoById.get(c.videoId) ?? null }));
 
-  const periodFastestGrowing = fastestGrowingInWindow(
-    videos.filter((v) => !v.hidden),
-    snapshotsByVideo,
-    from,
-  );
+  const visibleVideos = videos.filter((v) => !v.hidden);
+  const growthLeaders = topGrowersInWindow(visibleVideos, snapshotsByVideo, from, 3);
+  const periodFastestGrowing = fastestGrowingInWindow(visibleVideos, snapshotsByVideo, from);
 
   return {
     campaign,
@@ -410,6 +415,7 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     kpis: { ...kpis, fastestGrowing },
     historyStart: earliest,
     periodFastestGrowing,
+    growthLeaders,
     trend,
     trendByPlatform,
     trendIsSparse: isSparseTrend(trend),

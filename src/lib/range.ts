@@ -76,16 +76,41 @@ export function fastestGrowingInWindow(
   snapshotsByVideo: Map<string, MetricSnapshot[]>,
   from: Date,
 ): { video: Video; gained: number } | null {
-  let best: { video: Video; gained: number } | null = null;
+  return topGrowersInWindow(videos, snapshotsByVideo, from, 1)[0] ?? null;
+}
+
+/**
+ * Top-N growers within a window, with each video's share of the combined
+ * positive growth. Same rules as fastestGrowingInWindow: two confirmed
+ * readings inside [from, now], real deltas only.
+ */
+export function topGrowersInWindow(
+  videos: Video[],
+  snapshotsByVideo: Map<string, MetricSnapshot[]>,
+  from: Date,
+  n = 3,
+): Array<{ video: Video; gained: number; sharePct: number; currentViews: number | null }> {
   const fromIso = from.toISOString();
+  const growers: Array<{ video: Video; gained: number; currentViews: number | null }> = [];
   for (const video of videos) {
     if (video.hidden) continue;
     const confirmed = (snapshotsByVideo.get(video.id) ?? [])
       .filter((s) => s.capturedAt >= fromIso && s.views !== null)
       .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
     if (confirmed.length < 2) continue;
-    const gained = (confirmed[confirmed.length - 1].views as number) - (confirmed[0].views as number);
-    if (gained > 0 && (!best || gained > best.gained)) best = { video, gained };
+    const gained =
+      (confirmed[confirmed.length - 1].views as number) - (confirmed[0].views as number);
+    if (gained > 0) {
+      growers.push({
+        video,
+        gained,
+        currentViews: confirmed[confirmed.length - 1].views,
+      });
+    }
   }
-  return best;
+  const total = growers.reduce((a, b) => a + b.gained, 0);
+  return growers
+    .sort((a, b) => b.gained - a.gained)
+    .slice(0, n)
+    .map((g) => ({ ...g, sharePct: total > 0 ? Math.round((g.gained / total) * 100) : 0 }));
 }
