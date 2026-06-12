@@ -88,9 +88,12 @@ curl -X POST "https://<your-app>.vercel.app/api/cron/refresh" \
 - **Vercel Pro**: works out of the box (10-min crons + long function duration).
 - **Hobby plan**: crons are limited to daily and functions cap at ~60s, which a
   multi-actor refresh exceeds. Use a free external scheduler instead —
-  [cron-job.org](https://cron-job.org): create a job every 10 minutes,
+  [cron-job.org](https://cron-job.org): create a job every 5 minutes,
   URL `https://<your-app>.vercel.app/api/cron/refresh`, request header
   `Authorization: Bearer <CRON_SECRET>`, timeout 300s.
+- **Current production setup**: cron-job.org job 7793727 is the primary
+  scheduler (every 5 minutes, header auth). GitHub Actions is a manual
+  fallback only — its cron schedule was removed for unreliability.
 
 ## 9. Share with your boss
 

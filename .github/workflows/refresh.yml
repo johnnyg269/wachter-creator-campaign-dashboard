@@ -1,5 +1,8 @@
-# Scheduled campaign refresh — hits the production cron endpoint every
-# 5 minutes. Overlap-safe: the app skips a run if one is already in progress. Works on any plan (the schedule runs here, not on Vercel).
+# Manual fallback for the campaign refresh. The primary scheduler is
+# cron-job.org (job 7793727, every 5 minutes, Authorization header configured
+# there) — GitHub's cron schedule proved unreliable, so it was removed here.
+# Trigger this manually from the Actions tab if cron-job.org is down.
+# Overlap-safe: the app skips a run if one is already in progress.
 #
 # Setup (after pushing this repo to GitHub):
 #   Repo → Settings → Secrets and variables → Actions:
@@ -11,8 +14,6 @@
 name: Refresh campaign data
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 jobs:

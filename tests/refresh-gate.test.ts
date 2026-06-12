@@ -99,12 +99,14 @@ describe("public read-only guarantees (source-level)", () => {
 });
 
 describe("5-minute scheduler wiring", () => {
-  it("GitHub Actions workflow runs every 5 minutes with dispatch + bearer", () => {
+  it("GitHub Actions workflow is a manual fallback only (cron-job.org is primary)", () => {
     const wf = readFileSync(
       path.join(process.cwd(), ".github/workflows/refresh.yml"),
       "utf-8",
     );
-    expect(wf).toContain('cron: "*/5 * * * *"');
+    // The schedule lives on cron-job.org (job 7793727); GitHub's cron was
+    // removed for unreliability and must not silently come back.
+    expect(wf).not.toContain("schedule:");
     expect(wf).toContain("workflow_dispatch");
     expect(wf).toContain("Authorization: Bearer ${CRON_SECRET}");
     expect(wf).toContain("secrets.CRON_SECRET");

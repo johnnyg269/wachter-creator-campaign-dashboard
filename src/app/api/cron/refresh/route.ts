@@ -2,8 +2,16 @@
 // Vercel Cron sends "Authorization: Bearer $CRON_SECRET" automatically when
 // the env var is set; external schedulers can use the same header or
 // ?secret=... as a fallback.
+//
+// Responds 202 immediately and runs the refresh after the response (via
+// after()), because the primary scheduler — cron-job.org free tier — caps
+// requests at 30s while a full refresh takes minutes; a blocking response
+// made every execution register there as a timeout failure, which risks the
+// job being auto-disabled. Pass ?sync=1 to block and get the full report
+// back (debugging / manual curl). The refresh lock in runRefresh still
+// prevents overlapping runs in both modes.
 
-import { type NextRequest, NextResponse } from "next/server";
+import { after, type NextRequest, NextResponse } from "next/server";
 import { getCronSecret } from "@/lib/config";
 import { runRefresh } from "@/lib/refresh";
 
@@ -25,15 +33,25 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       { status: 401 },
     );
   }
-  try {
-    const report = await runRefresh("cron");
-    return NextResponse.json({ ok: true, report });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "Refresh failed" },
-      { status: 500 },
-    );
+  if (req.nextUrl.searchParams.get("sync") === "1") {
+    try {
+      const report = await runRefresh("cron");
+      return NextResponse.json({ ok: true, report });
+    } catch (e) {
+      return NextResponse.json(
+        { ok: false, error: e instanceof Error ? e.message : "Refresh failed" },
+        { status: 500 },
+      );
+    }
   }
+  after(async () => {
+    try {
+      await runRefresh("cron");
+    } catch (e) {
+      console.error("[cron/refresh] background refresh failed:", e);
+    }
+  });
+  return NextResponse.json({ ok: true, accepted: true }, { status: 202 });
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {

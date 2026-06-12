@@ -72,8 +72,15 @@ When `CRON_SECRET` is set, Vercel automatically sends `Authorization: Bearer $CR
    curl "https://your-app.vercel.app/api/cron/refresh?secret=YOUR_CRON_SECRET"
    ```
 
-   - **cron-job.org** — free; create a job for the URL above, every 10 minutes, and add the `Authorization` header under the job's advanced settings.
-   - **GitHub Actions** — note that scheduled workflows are best-effort and can lag:
+   - **cron-job.org** — free; this is the **primary production scheduler**.
+     Job 7793727 hits the endpoint every 5 minutes with the
+     `Authorization: Bearer` header set under the job's advanced settings.
+     The account API key lives in `.env.local` as `CRONJOB_ORG_API_KEY`;
+     manage the job via `https://api.cron-job.org/jobs/7793727` or
+     console.cron-job.org.
+   - **GitHub Actions** — manual fallback only (`workflow_dispatch` in
+     `.github/workflows/refresh.yml`); the cron schedule was removed because
+     GitHub's scheduled workflows are best-effort and lagged badly:
 
      ```yaml
      # .github/workflows/refresh.yml
