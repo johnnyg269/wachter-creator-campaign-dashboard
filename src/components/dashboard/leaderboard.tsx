@@ -30,7 +30,14 @@ function LeaderboardRow({ m, rank }: { m: VideoMetrics; rank: number }) {
   const title = videoTitle(m);
   return (
     <li className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-surface-hover/50">
-      <span className="tabular w-5 shrink-0 text-right text-xs font-semibold text-muted-strong">
+      <span
+        className={
+          rank === 1
+            ? "tabular flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[var(--accent-soft)] text-xs font-bold text-accent"
+            : "tabular w-5 shrink-0 text-right text-xs font-semibold text-muted-strong"
+        }
+        title={rank === 1 ? "Leading video in this ranking" : undefined}
+      >
         {rank}
       </span>
       <VideoThumb

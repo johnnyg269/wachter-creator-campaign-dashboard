@@ -28,18 +28,18 @@ describe("coverageNote — honest history indicator", () => {
   });
   it("explains limited history when the range asks for more than exists", () => {
     const note = coverageNote("7d", hoursAgo(15), NOW);
-    expect(note).toMatch(/7d selected/);
-    expect(note).toMatch(/15 hours of history available/);
+    expect(note).toMatch(/Showing 15 hours of verified history/);
     expect(note).toMatch(/since Jun 1[12]/); // local-time render of the UTC instant
-    expect(coverageNote("30d", hoursAgo(15), NOW)).toMatch(/30d selected/);
+    expect(note).toMatch(/more builds with each 5-minute refresh/);
+    expect(coverageNote("30d", hoursAgo(15), NOW)).toMatch(/verified history/);
   });
   it("allows ~5% slack so 23.5h of history covers a 24h selection", () => {
     expect(coverageNote("24h", hoursAgo(23.5), NOW)).toBeNull();
-    expect(coverageNote("24h", hoursAgo(12), NOW)).toMatch(/24h selected/);
+    expect(coverageNote("24h", hoursAgo(12), NOW)).toMatch(/Showing 12 hours of verified history/);
   });
   it("All always states the real start of history", () => {
     expect(coverageNote("all", hoursAgo(15), NOW)).toMatch(
-      /Showing all available history · since/,
+      /Showing all verified history · tracking since/,
     );
   });
   it("is silent with no history at all (empty state handles that)", () => {

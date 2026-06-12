@@ -132,7 +132,7 @@ function MomentumTooltip({
     .filter((b) => b.value !== null)
     .sort((a, b) => (b.value as number) - (a.value as number));
   return (
-    <div className="min-w-[180px] rounded-xl border border-border-strong bg-surface-raised px-3.5 py-3 text-xs shadow-2xl">
+    <div className="min-w-[180px] rounded-xl border border-border-strong bg-surface-raised/95 px-3.5 py-3 text-xs shadow-2xl backdrop-blur-sm">
       <div className="text-[10px] font-medium uppercase tracking-wide text-muted-strong">
         {row.label}
       </div>
@@ -194,6 +194,21 @@ export function MomentumChart({
     rows.length >= 2
       ? new Date(rows[rows.length - 1].t).getTime() - new Date(rows[0].t).getTime()
       : 0;
+  const timeTicks = range === "24h" || (range === "all" && spanMs <= 48 * 3_600_000);
+  // Day-label mode: one tick per calendar day, never "Jun 11" repeated.
+  const dayTicks = useMemo(() => {
+    if (timeTicks) return undefined;
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const r of rows) {
+      const day = new Date(r.t).toDateString();
+      if (!seen.has(day)) {
+        seen.add(day);
+        out.push(r.t);
+      }
+    }
+    return out;
+  }, [rows, timeTicks]);
 
   return (
     <div>
@@ -264,6 +279,7 @@ export function MomentumChart({
             />
             <XAxis
               dataKey="t"
+              ticks={dayTicks}
               tickFormatter={(t: string) => tickLabel(t, range, spanMs)}
               stroke="#5c6878"
               fontSize={10}
@@ -300,10 +316,10 @@ export function MomentumChart({
               <ReferenceDot
                 x={last.t}
                 y={last[metric] as number}
-                r={4.5}
+                r={5}
                 fill={meta.color}
                 stroke="var(--background)"
-                strokeWidth={2}
+                strokeWidth={2.5}
               />
             )}
           </AreaChart>

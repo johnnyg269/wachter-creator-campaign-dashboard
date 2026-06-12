@@ -3,12 +3,21 @@ import clsx from "clsx";
 export function Card({
   children,
   className,
+  hover = true,
 }: {
   children: React.ReactNode;
   className?: string;
+  /** Subtle border-brighten on hover — keeps the page feeling alive without motion. */
+  hover?: boolean;
 }) {
   return (
-    <div className={clsx("card-sheen rounded-xl border border-border", className)}>
+    <div
+      className={clsx(
+        "card-sheen rounded-xl border border-border",
+        hover && "transition-[border-color,box-shadow] duration-200 hover:border-border-strong",
+        className,
+      )}
+    >
       {children}
     </div>
   );

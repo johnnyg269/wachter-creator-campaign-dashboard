@@ -51,12 +51,12 @@ export function coverageNote(
   const availableMs = now.getTime() - new Date(historyStartIso).getTime();
   if (availableMs <= 0) return null;
   if (range === "all") {
-    return `Showing all available history · since ${shortDateTime(historyStartIso)}`;
+    return `Showing all verified history · tracking since ${shortDateTime(historyStartIso)}`;
   }
   const requested = RANGE_MS[range];
   // 5% slack: a 23.9-hour history fully covers a "24h" selection in spirit.
   if (availableMs >= requested * 0.95) return null;
-  return `${range} selected · ${humanDuration(availableMs)} of history available (since ${shortDateTime(historyStartIso)})`;
+  return `Showing ${humanDuration(availableMs)} of verified history (since ${shortDateTime(historyStartIso)}) · more builds with each 5-minute refresh`;
 }
 
 /** Empty/sparse-state explainer: when did tracking actually begin. */
