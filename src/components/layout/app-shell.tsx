@@ -2,6 +2,7 @@
 
 // App shell: fixed sidebar on desktop, collapsible top nav on mobile.
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -61,16 +62,42 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function Brand() {
+/**
+ * Brand block. Full horizontal logo in the expanded sidebar; the extracted
+ * icon-only mark in compact/mobile states. White wordmark on transparency —
+ * built for this dark background. Never stretched: explicit aspect ratios
+ * from the source files (2584×358 full, 456×358 mark) + h-auto/w-auto.
+ */
+function Brand({ compact = false }: { compact?: boolean }) {
+  if (compact) {
+    return (
+      <Link href="/" className="flex items-center gap-2.5" aria-label="Wachter Creator Campaign dashboard home">
+        <Image
+          src="/branding/wachter-creator-mark.png"
+          alt=""
+          width={456}
+          height={358}
+          priority
+          className="h-7 w-auto"
+        />
+        <span className="text-sm font-semibold tracking-tight">Creator Campaign</span>
+      </Link>
+    );
+  }
   return (
-    <Link href="/" className="flex items-center gap-2.5 px-3">
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">
-        W
-      </div>
-      <div className="leading-tight">
-        <div className="text-sm font-semibold tracking-tight">Wachter</div>
-        <div className="text-[11px] text-muted">Creator Campaign</div>
-      </div>
+    <Link
+      href="/"
+      className="block px-3 pt-1 transition-opacity hover:opacity-85"
+      aria-label="Wachter Creator Campaign dashboard home"
+    >
+      <Image
+        src="/branding/wachter-creator-logo.png"
+        alt="Wachter Creator Campaign"
+        width={2584}
+        height={358}
+        priority
+        className="h-auto w-full max-w-[188px] object-contain"
+      />
     </Link>
   );
 }
@@ -97,7 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top bar */}
       <div className="lg:hidden fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-border bg-surface/95 backdrop-blur px-4 py-3">
-        <Brand />
+        <Brand compact />
         <button
           onClick={() => setOpen(!open)}
           className="rounded-lg p-2 text-muted hover:text-foreground"
