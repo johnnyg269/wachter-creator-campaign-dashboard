@@ -79,6 +79,16 @@ export interface Store {
   upsertEpisodeGroupByName(
     e: Omit<EpisodeGroup, "id" | "createdAt" | "updatedAt"> & { id?: string },
   ): Promise<EpisodeGroup>;
+  /** Rename / re-describe an episode. Assigned videos keep their assignment
+   * (the id never changes) and rollups follow the new name. */
+  updateEpisodeGroup(
+    id: string,
+    patch: Partial<Pick<EpisodeGroup, "name" | "description">>,
+  ): Promise<EpisodeGroup>;
+  /** Delete an episode WITHOUT deleting its videos: members are reassigned
+   * to replacementId (or unassigned when null) first. Returns how many
+   * videos were moved. */
+  deleteEpisodeGroup(id: string, replacementId: string | null): Promise<{ videosMoved: number }>;
 
   // Alerts
   listAlerts(status?: AlertStatus): Promise<Alert[]>;

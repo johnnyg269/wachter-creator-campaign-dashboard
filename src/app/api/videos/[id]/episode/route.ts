@@ -1,9 +1,10 @@
-// Assign or clear a video's episode group. Internal tool — no auth; this
-// mirrors the assignment controls available in /admin. Every change is
-// recorded in the manual-override audit log.
+// Assign or clear a video's episode group. ADMIN-ONLY: the public dashboard
+// is read-only, so episode assignment requires the admin session like every
+// other mutation. Every change is recorded in the manual-override audit log.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getStore } from "@/lib/store";
+import { checkAdminRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const denied = checkAdminRequest(req);
+  if (denied) {
+    return NextResponse.json({ ok: false, error: denied }, { status: 401 });
+  }
   try {
     const { id } = await params;
 
@@ -54,7 +59,7 @@ export async function POST(
         field: "episodeGroupId",
         oldValue: video.episodeGroupId,
         newValue: episodeGroupId,
-        reason: "Episode assignment from /episodes",
+        reason: "Episode assignment from admin",
       });
     }
 

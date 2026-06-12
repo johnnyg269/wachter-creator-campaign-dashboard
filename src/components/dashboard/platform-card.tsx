@@ -35,14 +35,45 @@ function CommentDelta({ value }: { value: number | null }) {
   );
 }
 
-export function PlatformCard({ stats }: { stats: PlatformStats }) {
+const PLATFORM_BAR: Record<string, string> = {
+  tiktok: "#25f4ee",
+  youtube: "#ff4444",
+  instagram: "#e95daa",
+  facebook: "#4b8dff",
+};
+
+export function PlatformCard({
+  stats,
+  rank,
+  shareOfViews,
+}: {
+  stats: PlatformStats;
+  /** 1-based rank by total views (1 = leading platform). */
+  rank?: number;
+  /** Share of all confirmed views, 0–100. */
+  shareOfViews?: number | null;
+}) {
   const bestTitle = stats.bestVideo
     ? (stats.bestVideo.video.title ?? stats.bestVideo.video.caption ?? "Untitled video")
     : null;
   return (
     <Card className="flex flex-col gap-3.5 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <PlatformBadge platform={stats.platform} />
+        <span className="flex items-center gap-2">
+          {rank !== undefined && (
+            <span
+              className={
+                rank === 1
+                  ? "inline-flex h-5 w-5 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[11px] font-bold text-accent"
+                  : "inline-flex h-5 w-5 items-center justify-center rounded-md border border-border text-[11px] font-semibold text-muted"
+              }
+              title={rank === 1 ? "Leading platform by views" : `#${rank} by views`}
+            >
+              {rank}
+            </span>
+          )}
+          <PlatformBadge platform={stats.platform} />
+        </span>
         <StatusPill status={stats.sourceStatus} size="sm" />
       </div>
 
@@ -51,6 +82,23 @@ export function PlatformCard({ stats }: { stats: PlatformStats }) {
           {formatCompact(stats.views)}
         </div>
         <div className="text-[10px] uppercase tracking-wide text-muted-strong">Views</div>
+        {shareOfViews !== null && shareOfViews !== undefined && (
+          <div className="mt-2" title={`${shareOfViews}% of all confirmed campaign views`}>
+            <div className="h-1 overflow-hidden rounded-full bg-surface-hover">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.max(2, shareOfViews)}%`,
+                  background: PLATFORM_BAR[stats.platform],
+                  opacity: 0.85,
+                }}
+              />
+            </div>
+            <div className="mt-1 text-[10px] text-muted-strong">
+              {shareOfViews}% of campaign views
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">

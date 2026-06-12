@@ -644,6 +644,50 @@ export class PrismaStore implements Store {
     return episodeGroupToDomain(row);
   }
 
+  async updateEpisodeGroup(
+    id: string,
+    patch: Partial<Pick<EpisodeGroup, "name" | "description">>,
+  ): Promise<EpisodeGroup> {
+    const current = await this.prisma.episodeGroup.findUnique({ where: { id } });
+    if (!current) throw new Error("Episode not found");
+    if (patch.name !== undefined) {
+      const clash = await this.prisma.episodeGroup.findFirst({
+        where: { campaignId: current.campaignId, name: patch.name, NOT: { id } },
+      });
+      if (clash) throw new Error("An episode with that name already exists");
+    }
+    const row = await this.prisma.episodeGroup.update({
+      where: { id },
+      data: {
+        name: patch.name ?? undefined,
+        description: patch.description === undefined ? undefined : patch.description,
+      },
+    });
+    return episodeGroupToDomain(row);
+  }
+
+  async deleteEpisodeGroup(
+    id: string,
+    replacementId: string | null,
+  ): Promise<{ videosMoved: number }> {
+    const existing = await this.prisma.episodeGroup.findUnique({ where: { id } });
+    if (!existing) throw new Error("Episode not found");
+    if (replacementId === id) throw new Error("Replacement cannot be the episode being deleted");
+    if (replacementId !== null) {
+      const repl = await this.prisma.episodeGroup.findUnique({ where: { id: replacementId } });
+      if (!repl) throw new Error("Replacement episode not found");
+    }
+    // Reassign members first, then delete — videos are never deleted.
+    const [moved] = await this.prisma.$transaction([
+      this.prisma.video.updateMany({
+        where: { episodeGroupId: id },
+        data: { episodeGroupId: replacementId },
+      }),
+      this.prisma.episodeGroup.delete({ where: { id } }),
+    ]);
+    return { videosMoved: moved.count };
+  }
+
   // ── Alerts ─────────────────────────────────────────────────────────────────
 
   async listAlerts(status?: AlertStatus): Promise<Alert[]> {

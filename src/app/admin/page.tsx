@@ -15,12 +15,14 @@ import { ApifySetup } from "./apify-setup";
 import { CampaignSettings } from "./campaign-settings";
 import { ContentManager } from "./content-manager";
 import { RefreshHealthPanel } from "./refresh-health";
+import { EpisodeManager } from "./episode-manager";
 
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
+  { id: "episodes", label: "Episodes" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
   { id: "content", label: "Tracked Content" },
@@ -182,6 +184,13 @@ export default async function AdminPage() {
 
         <section id="automation">
           <RefreshHealthPanel runs={data.refreshRuns} />
+        </section>
+
+        <section id="episodes">
+          <EpisodeManager
+            episodes={data.episodeRollups}
+            unassignedVideoCount={data.unassignedVideoCount}
+          />
         </section>
 
         <section id="campaign">

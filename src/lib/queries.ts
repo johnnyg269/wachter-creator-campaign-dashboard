@@ -25,6 +25,7 @@ import {
   HOUR_MS,
   aggregateTrend,
   computeVideoMetrics,
+  engagements,
   deltaOverWindow,
   isSparseTrend,
   isViewsFrozen,
@@ -261,6 +262,9 @@ export interface DashboardData {
   health: HealthSummary;
   kpis: Kpis;
   trend: TrendPoint[];
+  /** Per-platform trend over the same buckets — feeds the chart tooltip's
+   * platform breakdown and the growth-share narrative. */
+  trendByPlatform: Partial<Record<Platform, TrendPoint[]>>;
   /** True when there's too little history for a meaningful line chart. */
   trendIsSparse: boolean;
   /** Gains across the selected range (first→last trend values). */
@@ -328,12 +332,21 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     : requestedFrom;
   const from = requestedFrom > earliestFrom ? requestedFrom : earliestFrom;
   const spanMs = now.getTime() - from.getTime();
-  const trend = aggregateTrend(
-    snapshotsByVideo,
-    from,
-    now,
-    Math.min(48, Math.max(12, Math.round(spanMs / (30 * 60 * 1000)))),
-  );
+  const bucketCount = Math.min(48, Math.max(12, Math.round(spanMs / (30 * 60 * 1000))));
+  const trend = aggregateTrend(snapshotsByVideo, from, now, bucketCount);
+  // Same buckets per platform so rows align 1:1 with the aggregate trend.
+  const trendByPlatform: Partial<Record<Platform, TrendPoint[]>> = {};
+  for (const platform of PLATFORMS) {
+    const subset = new Map<string, MetricSnapshot[]>();
+    for (const v of videos) {
+      if (v.platform !== platform) continue;
+      const snaps = snapshotsByVideo.get(v.id);
+      if (snaps?.length) subset.set(v.id, snaps);
+    }
+    if (subset.size > 0) {
+      trendByPlatform[platform] = aggregateTrend(subset, from, now, bucketCount);
+    }
+  }
   const trendWithData = trend.filter((p) => p.views !== null);
   const firstPoint = trendWithData[0] ?? null;
   const lastPoint = trendWithData[trendWithData.length - 1] ?? null;
@@ -385,6 +398,7 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
     health,
     kpis: { ...kpis, fastestGrowing },
     trend,
+    trendByPlatform,
     trendIsSparse: isSparseTrend(trend),
     periodDelta,
     sourceCapabilities: health.platforms.map((ph) => {
@@ -741,6 +755,18 @@ export interface AdminPageData {
   completeness: Record<string, Completeness>;
   /** Recent collection attempts (the provider attempt log). */
   attempts: CollectionAttempt[];
+  /** Per-episode rollups for the admin Episodes manager. */
+  episodeRollups: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    videoCount: number;
+    totalViews: number | null;
+    totalEngagements: number | null;
+    totalComments: number | null;
+  }>;
+  /** Videos with no episode assignment (admin Episodes manager). */
+  unassignedVideoCount: number;
   /** Production-readiness booleans (never the secret values themselves). */
   readiness: {
     databaseConnected: boolean;
@@ -780,6 +806,30 @@ export async function getAdminPageData(): Promise<AdminPageData> {
       episodeName: v.episodeGroupId ? (episodeById.get(v.episodeGroupId) ?? null) : null,
     })),
     episodes: data.episodes,
+    episodeRollups: data.episodes.map((e) => {
+      const members = data.videos.filter((v) => !v.hidden && v.episodeGroupId === e.id);
+      let views: number | null = null;
+      let eng: number | null = null;
+      let comments: number | null = null;
+      for (const v of members) {
+        const m = data.metricsByVideo.get(v.id);
+        if (!m?.latest) continue;
+        if (m.latest.views !== null) views = (views ?? 0) + m.latest.views;
+        if (m.latest.comments !== null) comments = (comments ?? 0) + m.latest.comments;
+        const e2 = engagements(m.latest);
+        if (e2 !== null) eng = (eng ?? 0) + e2;
+      }
+      return {
+        id: e.id,
+        name: e.name,
+        description: e.description,
+        videoCount: members.length,
+        totalViews: views,
+        totalEngagements: eng,
+        totalComments: comments,
+      };
+    }),
+    unassignedVideoCount: data.videos.filter((v) => !v.hidden && !v.episodeGroupId).length,
     refreshRuns: await store.listRefreshRuns(15),
     providerConfigs: await store.listProviderConfigs(),
     tokenStatus: await checkToken(),

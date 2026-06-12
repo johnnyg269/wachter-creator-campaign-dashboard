@@ -19,7 +19,6 @@ import { TimeAgo } from "@/components/ui/time-ago";
 import { VideoThumb } from "@/components/ui/video-thumb";
 import { SimpleBarChart, type BarDatum } from "@/components/charts/bar-chart";
 
-import { AssignEpisodeSelect, type EpisodeOption } from "./assign-episode-select";
 import { Expandable } from "./expandable";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +31,6 @@ export default async function EpisodesPage() {
   const [data, health] = await Promise.all([getEpisodesPageData(), getHealth()]);
   const { episodes, unassigned, allEpisodes } = data;
 
-  const episodeOptions: EpisodeOption[] = allEpisodes.map((e) => ({ id: e.id, name: e.name }));
   const withVideos = episodes.filter((e) => e.videos.length > 0);
   const assignedCount = withVideos.reduce((sum, e) => sum + e.videos.length, 0);
 
@@ -77,7 +75,7 @@ export default async function EpisodesPage() {
                 detail={
                   allEpisodes.length === 0
                     ? "Create episode concepts in Admin, then assign videos to compare the same content across platforms."
-                    : "Assign videos to a concept below (or in Admin) to compare cross-platform performance."
+                    : "Assign videos to a concept in Admin → Episodes to compare cross-platform performance."
                 }
               />
             ) : (
@@ -108,7 +106,7 @@ export default async function EpisodesPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {episodes.map((stats) => (
-              <EpisodeCard key={stats.episode.id} stats={stats} episodeOptions={episodeOptions} />
+              <EpisodeCard key={stats.episode.id} stats={stats} />
             ))}
           </div>
         )}
@@ -128,18 +126,12 @@ export default async function EpisodesPage() {
             <Card>
               <CardHeader
                 title={`${unassigned.length} ${unassigned.length === 1 ? "video" : "videos"} without a concept`}
-                subtitle="Assign each one to an episode so cross-platform totals stay accurate"
+                subtitle="Group these into concepts from Admin → Episodes so cross-platform totals stay accurate"
               />
               <CardBody>
                 <ul className="divide-y divide-border">
                   {unassigned.map((m) => (
-                    <VideoRow
-                      key={m.video.id}
-                      metrics={m}
-                      currentEpisodeId={null}
-                      episodeOptions={episodeOptions}
-                      placeholder="Assign to episode…"
-                    />
+                    <VideoRow key={m.video.id} metrics={m} />
                   ))}
                 </ul>
               </CardBody>
@@ -155,13 +147,7 @@ export default async function EpisodesPage() {
 // Episode card (server component)
 // ---------------------------------------------------------------------------
 
-function EpisodeCard({
-  stats,
-  episodeOptions,
-}: {
-  stats: EpisodeStats;
-  episodeOptions: EpisodeOption[];
-}) {
+function EpisodeCard({ stats }: { stats: EpisodeStats }) {
   const { episode, videos } = stats;
   const lastRefreshed =
     videos
@@ -191,7 +177,7 @@ function EpisodeCard({
       <CardBody className="flex flex-1 flex-col gap-4">
         {videos.length === 0 ? (
           <p className="text-xs text-muted-strong">
-            No videos assigned yet — assign below or in{" "}
+            No videos assigned yet — manage assignments in{" "}
             <Link href="/admin" className="text-muted underline underline-offset-2 hover:text-foreground">
               /admin
             </Link>
@@ -231,13 +217,7 @@ function EpisodeCard({
               <Expandable label={`Videos (${videos.length})`}>
                 <ul className="divide-y divide-border">
                   {videos.map((m) => (
-                    <VideoRow
-                      key={m.video.id}
-                      metrics={m}
-                      currentEpisodeId={episode.id}
-                      episodeOptions={episodeOptions}
-                      placeholder="Move to…"
-                    />
+                    <VideoRow key={m.video.id} metrics={m} />
                   ))}
                 </ul>
               </Expandable>
@@ -290,17 +270,7 @@ function TopVideo({ metrics }: { metrics: VideoMetrics }) {
 // Shared video row (member lists + unassigned list)
 // ---------------------------------------------------------------------------
 
-function VideoRow({
-  metrics,
-  currentEpisodeId,
-  episodeOptions,
-  placeholder,
-}: {
-  metrics: VideoMetrics;
-  currentEpisodeId: string | null;
-  episodeOptions: EpisodeOption[];
-  placeholder: string;
-}) {
+function VideoRow({ metrics }: { metrics: VideoMetrics }) {
   const v = metrics.video;
   const title = videoTitle(v);
   const views = metrics.latest?.views ?? null;
@@ -336,18 +306,6 @@ function VideoRow({
           </span>
         </div>
       </div>
-      <AssignEpisodeSelect
-        videoId={v.id}
-        currentEpisodeId={currentEpisodeId}
-        episodes={episodeOptions}
-        placeholder={placeholder}
-        ariaLabel={
-          currentEpisodeId
-            ? `Move ${title} to another episode`
-            : `Assign ${title} to an episode`
-        }
-        className="shrink-0"
-      />
     </li>
   );
 }

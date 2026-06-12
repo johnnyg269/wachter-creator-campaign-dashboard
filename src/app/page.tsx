@@ -3,6 +3,14 @@
 
 import clsx from "clsx";
 import Link from "next/link";
+import {
+  Activity,
+  Eye,
+  Film,
+  Heart,
+  MessagesSquare,
+  TrendingUp,
+} from "lucide-react";
 import { getDashboardData, type TimeRange } from "@/lib/queries";
 import { PLATFORM_LABELS } from "@/lib/types";
 import { formatCompact, formatDate, formatDelta, formatNumber, formatPct, timeAgo, truncate } from "@/lib/format";
@@ -13,7 +21,7 @@ import { TimeAgo } from "@/components/ui/time-ago";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { DataNotice } from "@/components/layout/data-notice";
-import { TrendChart } from "@/components/charts/trend-chart";
+import { MomentumChart } from "@/components/charts/momentum-chart";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
 import { PlatformCard } from "@/components/dashboard/platform-card";
@@ -32,6 +40,26 @@ const RANGE_LABELS: Record<TimeRange, string> = {
 
 function parseRange(value: string | string[] | undefined): TimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "7d";
+}
+
+/** Which platform drove the largest share of view growth this period. */
+function growthLeader(
+  trendByPlatform: import("@/lib/queries").DashboardData["trendByPlatform"],
+): { platform: import("@/lib/types").Platform; pct: number } | null {
+  const deltas: Array<{ platform: import("@/lib/types").Platform; gained: number }> = [];
+  for (const [platform, series] of Object.entries(trendByPlatform)) {
+    const withViews = (series ?? []).filter((pt) => pt.views !== null);
+    const first = withViews[0];
+    const last = withViews[withViews.length - 1];
+    if (first && last && first !== last) {
+      const gained = (last.views as number) - (first.views as number);
+      if (gained > 0) deltas.push({ platform: platform as import("@/lib/types").Platform, gained });
+    }
+  }
+  const total = deltas.reduce((a, b) => a + b.gained, 0);
+  if (total <= 0) return null;
+  const top = deltas.sort((a, b) => b.gained - a.gained)[0];
+  return { platform: top.platform, pct: Math.round((top.gained / total) * 100) };
 }
 
 /**
@@ -142,6 +170,35 @@ function PeriodStat({
   );
 }
 
+function HeroStat({
+  label,
+  value,
+  emphasis,
+  positive,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+  positive?: boolean;
+}) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-strong">
+        {label}
+      </span>
+      <span
+        className={clsx(
+          "tabular-nums font-bold leading-tight tracking-tight",
+          emphasis ? "text-xl" : "text-base",
+          positive ? "text-positive" : "text-foreground",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -167,6 +224,21 @@ export default async function DashboardPage({
   const fastestTitle = kpis.fastestGrowing
     ? (kpis.fastestGrowing.video.title ?? kpis.fastestGrowing.video.caption ?? "Untitled video")
     : null;
+
+  // Narrative layer for the momentum card — real computed insights only.
+  const leader = growthLeader(data.trendByPlatform);
+  const momentumNarrative = !trendHasData
+    ? "Tracked totals will plot here after the first refresh"
+    : data.trendIsSparse
+      ? "Campaign tracking history is building — totals are live, the line fills in over time"
+      : [
+          data.periodDelta.views !== null && data.periodDelta.views > 0
+            ? `${formatDelta(data.periodDelta.views)} views ${RANGE_LABELS[range].toLowerCase()}`
+            : null,
+          leader ? `${PLATFORM_LABELS[leader.platform]} drove ${leader.pct}% of growth` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || `Tracked totals over real snapshots · ${RANGE_LABELS[range]}`;
 
   return (
     <div>
@@ -222,8 +294,35 @@ export default async function DashboardPage({
           </div>
         </div>
 
+        {/* At-a-glance strip: the five numbers an executive asks for first. */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-border bg-surface/60 px-4 py-3">
+          <HeroStat
+            label="Total views"
+            value={kpis.totalViews !== null ? formatCompact(kpis.totalViews) : "—"}
+            emphasis
+          />
+          <HeroStat
+            label="Views 24h"
+            value={kpis.viewsGained24h !== null ? formatDelta(kpis.viewsGained24h) : "—"}
+            positive={(kpis.viewsGained24h ?? 0) > 0}
+          />
+          <HeroStat
+            label="Engagements"
+            value={kpis.totalEngagements !== null ? formatCompact(kpis.totalEngagements) : "—"}
+          />
+          <HeroStat label="Videos tracked" value={formatNumber(kpis.videosTracked)} />
+          <HeroStat
+            label="Platforms"
+            value={`${liveCount}/${health.platforms.length} live`}
+          />
+          <HeroStat
+            label="Response opportunities"
+            value={formatNumber(commentStats.needsResponse)}
+          />
+        </div>
+
         {data.insights.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             {data.insights.map((line) => (
               <span
                 key={line}
@@ -267,90 +366,73 @@ export default async function DashboardPage({
       />
 
       <div className="space-y-6">
-        {/* KPI grid */}
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {/* KPI grid — six intentional numbers, each with context */}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
           <KpiCard
             label="Total views"
+            icon={<Eye />}
             value={kpis.totalViews !== null ? formatCompact(kpis.totalViews) : null}
-            delta={kpis.viewsGained24h}
-            deltaLabel="24h"
+            context="All platforms, confirmed plays"
             unavailableReason="No connected source yet"
             updatedAt={updatedAt}
           />
           <KpiCard
-            label="Total engagements"
+            label="24h growth"
+            icon={<TrendingUp />}
+            value={kpis.viewsGained24h !== null ? formatDelta(kpis.viewsGained24h) : null}
+            context="New views in the last day"
+            unavailableReason="Needs two snapshots"
+            updatedAt={updatedAt}
+            accent={
+              kpis.viewsGained24h !== null && kpis.viewsGained24h > 0 ? "#34d399" : undefined
+            }
+          />
+          <KpiCard
+            label="Engagements"
+            icon={<Heart />}
             value={kpis.totalEngagements !== null ? formatCompact(kpis.totalEngagements) : null}
             delta={data.periodDelta.engagements}
             deltaLabel="this period"
+            context="Likes + comments + shares"
             unavailableReason="No connected source yet"
             updatedAt={updatedAt}
           />
           <KpiCard
-            label="Total likes"
-            value={kpis.totalLikes !== null ? formatCompact(kpis.totalLikes) : null}
-            unavailableReason="No connected source yet"
-            updatedAt={updatedAt}
-          />
-          <KpiCard
-            label="Total comments"
-            value={kpis.totalComments !== null ? formatCompact(kpis.totalComments) : null}
-            unavailableReason="No connected source yet"
-            updatedAt={updatedAt}
-          />
-          <KpiCard
-            label="Avg engagement rate"
+            label="Engagement rate"
+            icon={<Activity />}
             value={kpis.avgEngagementRate !== null ? formatPct(kpis.avgEngagementRate) : null}
+            context="Average across tracked videos"
             unavailableReason="No engagement data yet"
             updatedAt={updatedAt}
           />
           <KpiCard
             label="Videos tracked"
+            icon={<Film />}
             value={formatNumber(kpis.videosTracked)}
+            context={`Across ${health.platforms.length} platforms`}
             updatedAt={updatedAt}
           />
           <KpiCard
-            label="Views gained 24h"
-            value={kpis.viewsGained24h !== null ? formatDelta(kpis.viewsGained24h) : null}
-            unavailableReason="Needs two snapshots"
+            label="Response opportunities"
+            icon={<MessagesSquare />}
+            value={formatNumber(commentStats.needsResponse)}
+            context="Comments awaiting a reply"
             updatedAt={updatedAt}
-            accent={
-              kpis.viewsGained24h !== null && kpis.viewsGained24h !== 0
-                ? kpis.viewsGained24h > 0
-                  ? "#34d399"
-                  : "#f87171"
-                : undefined
-            }
           />
-          {kpis.fastestGrowing && fastestTitle ? (
-            <KpiCard
-              label="Fastest-growing video"
-              value={truncate(fastestTitle, 20)}
-              delta={kpis.fastestGrowing.gained24h}
-              deltaLabel="views 24h"
-              updatedAt={updatedAt}
-            />
-          ) : (
-            <KpiCard
-              label="Fastest-growing video"
-              value={null}
-              unavailableReason="No growth data yet"
-              updatedAt={updatedAt}
-            />
-          )}
         </div>
 
-        {/* Performance trend */}
+        {/* Campaign momentum — the centerpiece chart with its story */}
         <Card>
           <CardHeader
-            title="Performance trend"
-            subtitle={`Tracked totals over real snapshots · ${RANGE_LABELS[range]}`}
+            title="Campaign momentum"
+            subtitle={momentumNarrative}
             action={<RangeSwitcher active={range} />}
           />
           <CardBody>
             {trendHasData && (
               <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                 <PeriodStat
-                  label="Views gained"
+                  label={`Views gained · ${RANGE_LABELS[range].toLowerCase()}`}
                   value={data.periodDelta.views !== null ? formatDelta(data.periodDelta.views) : "—"}
                   positive={(data.periodDelta.views ?? 0) > 0}
                 />
@@ -364,16 +446,20 @@ export default async function DashboardPage({
                   positive={(data.periodDelta.engagements ?? 0) > 0}
                 />
                 <PeriodStat
-                  label="Best platform today"
+                  label="Growth leader"
                   value={
-                    momentum.bestPlatformToday
-                      ? `${PLATFORM_LABELS[momentum.bestPlatformToday.platform]}`
-                      : "—"
+                    leader
+                      ? `${PLATFORM_LABELS[leader.platform]}`
+                      : momentum.bestPlatformToday
+                        ? PLATFORM_LABELS[momentum.bestPlatformToday.platform]
+                        : "—"
                   }
                   sub={
-                    momentum.bestPlatformToday
-                      ? `${formatDelta(momentum.bestPlatformToday.gained)} views`
-                      : undefined
+                    leader
+                      ? `${leader.pct}% of view growth this period`
+                      : momentum.bestPlatformToday
+                        ? `${formatDelta(momentum.bestPlatformToday.gained)} views today`
+                        : undefined
                   }
                 />
                 <PeriodStat
@@ -381,7 +467,7 @@ export default async function DashboardPage({
                   value={fastestTitle ? truncate(fastestTitle, 26) : "—"}
                   sub={
                     kpis.fastestGrowing
-                      ? `${formatDelta(kpis.fastestGrowing.gained24h)} views`
+                      ? `${formatDelta(kpis.fastestGrowing.gained24h)} views 24h`
                       : undefined
                   }
                 />
@@ -401,18 +487,32 @@ export default async function DashboardPage({
                 </div>
               </div>
             ) : (
-              <TrendChart data={data.trend} />
+              <MomentumChart data={data.trend} byPlatform={data.trendByPlatform} />
             )}
           </CardBody>
         </Card>
 
-        {/* Platform comparison */}
+        {/* Platform comparison — ranked by views so the winner reads instantly */}
         <section aria-label="Platform comparison">
           <SectionTitle className="mb-3">Platform comparison</SectionTitle>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {data.platformStats.map((s) => (
-              <PlatformCard key={s.platform} stats={s} />
-            ))}
+            {(() => {
+              const totalViews = data.platformStats.reduce((a, s) => a + (s.views ?? 0), 0);
+              return [...data.platformStats]
+                .sort((a, b) => (b.views ?? -1) - (a.views ?? -1))
+                .map((s, i) => (
+                  <PlatformCard
+                    key={s.platform}
+                    stats={s}
+                    rank={i + 1}
+                    shareOfViews={
+                      totalViews > 0 && s.views !== null
+                        ? Math.round((s.views / totalViews) * 100)
+                        : null
+                    }
+                  />
+                ));
+            })()}
           </div>
         </section>
 

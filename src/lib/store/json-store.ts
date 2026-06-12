@@ -349,6 +349,49 @@ export class JsonStore implements Store {
     return created;
   }
 
+  async updateEpisodeGroup(
+    id: string,
+    patch: Partial<Pick<EpisodeGroup, "name" | "description">>,
+  ): Promise<EpisodeGroup> {
+    const db = await this.load();
+    const e = db.episodeGroups.find((x) => x.id === id);
+    if (!e) throw new Error("Episode not found");
+    if (
+      patch.name !== undefined &&
+      db.episodeGroups.some((x) => x.id !== id && x.name === patch.name)
+    ) {
+      throw new Error("An episode with that name already exists");
+    }
+    if (patch.name !== undefined) e.name = patch.name;
+    if (patch.description !== undefined) e.description = patch.description;
+    e.updatedAt = new Date().toISOString();
+    await this.persist();
+    return e;
+  }
+
+  async deleteEpisodeGroup(
+    id: string,
+    replacementId: string | null,
+  ): Promise<{ videosMoved: number }> {
+    const db = await this.load();
+    const idx = db.episodeGroups.findIndex((x) => x.id === id);
+    if (idx === -1) throw new Error("Episode not found");
+    if (replacementId !== null && !db.episodeGroups.some((x) => x.id === replacementId)) {
+      throw new Error("Replacement episode not found");
+    }
+    if (replacementId === id) throw new Error("Replacement cannot be the episode being deleted");
+    let videosMoved = 0;
+    for (const v of db.videos) {
+      if (v.episodeGroupId === id) {
+        v.episodeGroupId = replacementId;
+        videosMoved++;
+      }
+    }
+    db.episodeGroups.splice(idx, 1);
+    await this.persist();
+    return { videosMoved };
+  }
+
   // ── Alerts ────────────────────────────────────────────────────────────────
 
   async listAlerts(status?: AlertStatus): Promise<Alert[]> {
