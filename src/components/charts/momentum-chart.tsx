@@ -7,7 +7,7 @@
 // platform with the gain since the previous snapshot. Gaps stay gaps — a
 // missing reading is never drawn as zero.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import {
   Area,
@@ -185,6 +185,15 @@ export function MomentumChart({
   range?: ChartRange;
 }) {
   const [metric, setMetric] = useState<Metric>("views");
+  const reducedMotion = useSyncExternalStore(
+    (onChange) => {
+      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false,
+  );
   const rows = useMemo(() => buildRows(data, byPlatform), [data, byPlatform]);
   const meta = METRIC_META[metric];
   const withData = rows.filter((r) => r[metric] !== null);
@@ -194,6 +203,15 @@ export function MomentumChart({
     rows.length >= 2
       ? new Date(rows[rows.length - 1].t).getTime() - new Date(rows[0].t).getTime()
       : 0;
+  // Largest single jump for the current metric — annotated on the line.
+  const biggestJump = useMemo(() => {
+    let best: Row | null = null;
+    for (const r of rows) {
+      const g = r.gained[metric];
+      if (g !== null && g > 0 && (!best || g > (best.gained[metric] as number))) best = r;
+    }
+    return best && (best.gained[metric] as number) > 0 ? best : null;
+  }, [rows, metric]);
   const timeTicks = range === "24h" || (range === "all" && spanMs <= 48 * 3_600_000);
   // Day-label mode: one tick per calendar day, never "Jun 11" repeated.
   const dayTicks = useMemo(() => {
@@ -213,16 +231,16 @@ export function MomentumChart({
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-1 rounded-lg border border-border bg-surface p-0.5">
+        <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
           {(Object.keys(METRIC_META) as Metric[]).map((m) => (
             <button
               key={m}
               onClick={() => setMetric(m)}
               aria-pressed={m === metric}
               className={clsx(
-                "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                "rounded-full px-3 py-1 text-[11px] font-medium transition-all duration-200",
                 m === metric
-                  ? "bg-surface-hover text-foreground shadow-sm"
+                  ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
                   : "text-muted hover:text-foreground",
               )}
             >
@@ -302,6 +320,22 @@ export function MomentumChart({
               content={<MomentumTooltip metric={metric} />}
               cursor={{ stroke: "#2a3447", strokeWidth: 1, strokeDasharray: "3 3" }}
             />
+            {/* Soft glow duplicate under the real line — pure presentation */}
+            {!reducedMotion && (
+              <Area
+                type="monotone"
+                dataKey={metric}
+                stroke={meta.color}
+                strokeWidth={5}
+                fill="none"
+                connectNulls={false}
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+                className="chart-glow"
+                tooltipType="none"
+              />
+            )}
             <Area
               type="monotone"
               dataKey={metric}
@@ -311,7 +345,25 @@ export function MomentumChart({
               connectNulls={false}
               dot={false}
               activeDot={{ r: 4, strokeWidth: 0, fill: meta.color }}
+              isAnimationActive={!reducedMotion}
+              animationDuration={900}
             />
+            {biggestJump && biggestJump.t !== last?.t && biggestJump[metric] !== null && (
+              <ReferenceDot
+                x={biggestJump.t}
+                y={biggestJump[metric] as number}
+                r={3.5}
+                fill="var(--background)"
+                stroke={meta.color}
+                strokeWidth={1.5}
+                label={{
+                  value: `+${formatCompact(biggestJump.gained[metric])}`,
+                  position: "top",
+                  fill: "#8b97a8",
+                  fontSize: 10,
+                }}
+              />
+            )}
             {last && last[metric] !== null && (
               <ReferenceDot
                 x={last.t}

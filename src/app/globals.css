@@ -100,3 +100,138 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Phase 3.7 visual + motion system ───────────────────────────────────── */
+
+/* Hero band: layered glow, no card box — the page opens cinematic. */
+.hero-band {
+  position: relative;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(ellipse 60% 90% at 18% 0%, rgba(59, 130, 246, 0.1), transparent 60%),
+    radial-gradient(ellipse 45% 80% at 88% 10%, rgba(233, 93, 170, 0.06), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0) 50%),
+    var(--surface);
+  overflow: hidden;
+}
+.hero-band::after {
+  /* faint dot grid for texture, fades out toward the bottom */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(139, 151, 168, 0.13) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 70%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 70%);
+  pointer-events: none;
+}
+
+/* Momentum centerpiece: deep panel with a glow field behind the line. */
+.momentum-panel {
+  position: relative;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(ellipse 70% 55% at 35% 75%, rgba(96, 165, 250, 0.08), transparent 65%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0) 45%),
+    var(--surface-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* Soft glow under the chart line (applied to a duplicated Area path). */
+.chart-glow {
+  filter: blur(7px);
+  opacity: 0.45;
+}
+
+/* Live pulse dot for status + Now marker companions. */
+.pulse-dot {
+  position: relative;
+  display: inline-flex;
+  height: 7px;
+  width: 7px;
+  border-radius: 9999px;
+  background: var(--positive);
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--positive);
+  opacity: 0;
+}
+
+/* Skeleton shimmer for loading states. */
+.skeleton {
+  border-radius: 10px;
+  background: linear-gradient(100deg, var(--surface) 40%, var(--surface-hover) 50%, var(--surface) 60%);
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .section-enter {
+    animation: rise-in 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .bar-fill {
+    transform-origin: left center;
+    animation: bar-grow 0.9s 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .pulse-dot::after {
+    animation: pulse-ring 2.6s ease-out infinite;
+  }
+  .skeleton {
+    animation: shimmer 1.6s linear infinite;
+  }
+  .value-flash {
+    animation: value-flash 1.2s ease-out 1;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes value-flash {
+  0% {
+    color: var(--positive);
+  }
+  100% {
+    color: inherit;
+  }
+}

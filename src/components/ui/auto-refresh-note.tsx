@@ -15,7 +15,13 @@ import {
   SCHEDULER_DELAYED_AFTER_MIN,
 } from "@/lib/scheduler";
 
-export async function AutoRefreshNote() {
+export async function AutoRefreshNote({
+  variant = "pill",
+}: {
+  /** "pill" = bordered chip (interior pages). "inline" = quiet hero text row
+   * with a live pulse dot — same honesty logic, calmer rendering. */
+  variant?: "pill" | "inline";
+} = {}) {
   let lastSuccessAt: string | null = null;
   try {
     const runs = await getStore().listRefreshRuns(15);
@@ -33,6 +39,24 @@ export async function AutoRefreshNote() {
   const veryDelayed = ageMin !== null && ageMin > SCHEDULER_DELAYED_AFTER_MIN;
 
   if (SCHEDULER.verified && !delayed) {
+    if (variant === "inline") {
+      return (
+        <span
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
+          title="Campaign data refreshes automatically on a 5-minute schedule. All viewers see the same saved data."
+        >
+          <span className="flex items-center gap-2">
+            <span className="pulse-dot" aria-hidden />
+            Auto-refreshing every {SCHEDULER.cadenceMinutes} minutes
+          </span>
+          {lastSuccessAt && (
+            <span className="text-muted-strong">
+              · Updated <TimeAgo iso={lastSuccessAt} />
+            </span>
+          )}
+        </span>
+      );
+    }
     return (
       <span
         className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
@@ -49,6 +73,24 @@ export async function AutoRefreshNote() {
     );
   }
 
+  if (variant === "inline") {
+    return (
+      <span
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-warning/90"
+        title="The scheduled refresh is running behind. The dashboard shows the latest saved data."
+      >
+        <AlertTriangle size={12} aria-hidden />
+        {veryDelayed || !SCHEDULER.verified
+          ? "Scheduler may be delayed"
+          : "Refresh delayed, latest data shown"}
+        {lastSuccessAt && (
+          <span className="text-muted-strong">
+            · Last successful refresh <TimeAgo iso={lastSuccessAt} />
+          </span>
+        )}
+      </span>
+    );
+  }
   return (
     <span
       className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"

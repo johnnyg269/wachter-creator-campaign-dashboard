@@ -52,9 +52,11 @@ describe("dashboard page", () => {
     expect(page).toContain("Waiting for first refresh");
     expect(page).toContain("Tracking history is building");
   });
-  it("ranks platform comparison by views with share-of-total", () => {
-    expect(page).toContain("shareOfViews");
-    expect(page).toContain("rank={i + 1}");
+  it("ranks platforms by views with share-of-total (leaderboard)", () => {
+    const lb = read("src/components/dashboard/platform-leaderboard.tsx");
+    expect(lb).toContain("sort((a, b) => (b.views ?? -1) - (a.views ?? -1))");
+    expect(lb).toContain("% of views");
+    expect(page).toContain("<PlatformLeaderboard");
   });
   it("still renders no refresh controls (read-only public view)", () => {
     expect(page).not.toContain("RefreshButton");
@@ -83,11 +85,13 @@ describe("homepage hierarchy (Phase 3.5)", () => {
     expect(ds).toContain("SourceStatusPanel");
     expect(ds).toContain("<details");
   });
-  it("secondary KPIs (engagement rate, videos tracked, responses) render below the chart", () => {
+  it("secondary metrics live in the story strip below the chart, not top-of-page cards", () => {
     const chart = page.indexOf("<MomentumChart");
-    expect(page.indexOf('label="Engagement rate"')).toBeGreaterThan(chart);
-    expect(page.indexOf('label="Videos tracked"')).toBeGreaterThan(chart);
-    expect(page.indexOf('label="Response opportunities"')).toBeGreaterThan(chart);
+    const story = page.indexOf("What’s happening now");
+    expect(story).toBeGreaterThan(chart);
+    expect(page).toContain("engagement rate");
+    expect(page).toContain("videos tracked across");
+    expect(page).toContain("may deserve a response");
   });
   it("confidence wording is calm when core metrics are verified", () => {
     const exec = read("src/lib/executive.ts");
