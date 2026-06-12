@@ -91,9 +91,12 @@ curl -X POST "https://<your-app>.vercel.app/api/cron/refresh" \
   [cron-job.org](https://cron-job.org): create a job every 5 minutes,
   URL `https://<your-app>.vercel.app/api/cron/refresh`, request header
   `Authorization: Bearer <CRON_SECRET>`, timeout 300s.
-- **Current production setup**: cron-job.org job 7793727 is the primary
-  scheduler (every 5 minutes, header auth). GitHub Actions is a manual
-  fallback only — its cron schedule was removed for unreliability.
+- **Current production setup**: cron-job.org job 7793727 ("Wachter Campaign
+  Dashboard Refresh") is the primary scheduler (every 5 minutes, POST, header
+  auth). GitHub Actions runs as a 30-minute best-effort backup — its 5-minute
+  schedule was removed after observed gaps of 1.4–2.2 hours. The endpoint
+  answers 202 instantly and refreshes in the background, so cron-job.org's
+  30-second free-tier cap never marks runs failed.
 
 ## 9. Share with your boss
 

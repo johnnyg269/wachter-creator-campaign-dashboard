@@ -13,6 +13,7 @@ PATTERNS=(
   'vercel_[A-Za-z0-9]{20,}'                          # Vercel tokens
   'ADMIN_PASSWORD=[^<\s][^\s]{3,}'                   # inline admin password values
   'CRON_SECRET=[a-f0-9]{16,}'                        # inline cron secret values
+  'CRONJOB_ORG_API_KEY=[A-Za-z0-9+/]{20,}={0,2}'     # inline cron-job.org API key values
 )
 
 FAIL=0

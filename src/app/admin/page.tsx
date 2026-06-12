@@ -14,12 +14,13 @@ import { LoginForm } from "./login-form";
 import { ApifySetup } from "./apify-setup";
 import { CampaignSettings } from "./campaign-settings";
 import { ContentManager } from "./content-manager";
+import { RefreshHealthPanel } from "./refresh-health";
 
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
-  { id: "automation", label: "Refresh Automation" },
+  { id: "automation", label: "Refresh Health" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
   { id: "content", label: "Tracked Content" },
@@ -153,7 +154,7 @@ export default async function AdminPage() {
               <ReadinessRow
                 ok={data.readiness.cronSecretSet}
                 label={`Cron: ${data.readiness.cronSecretSet ? "secret configured" : "CRON_SECRET missing"}`}
-                detail="GitHub Actions refreshes every 5 minutes; Vercel daily cron is the backstop"
+                detail="cron-job.org refreshes every 5 minutes; GitHub Actions is a 30-min backup"
               />
               <ReadinessRow
                 ok={data.readiness.adminPasswordSet}
@@ -180,130 +181,7 @@ export default async function AdminPage() {
         </section>
 
         <section id="automation">
-          <Card>
-            <CardHeader
-              title="Refresh automation"
-              subtitle="Automatic refresh every 5 minutes via GitHub Actions — manual refresh stays admin-only"
-            />
-            <CardBody className="space-y-4 text-xs">
-              {(() => {
-                const lastCron = data.refreshRuns.find((r) => r.trigger === "cron" && r.status !== "skipped");
-                const lastManual = data.refreshRuns.find(
-                  (r) => (r.trigger === "manual" || r.trigger === "force") && r.status !== "skipped",
-                );
-                const activeLock = data.refreshRuns.find(
-                  (r) =>
-                    r.status === "running" &&
-                    Date.now() - new Date(r.startedAt).getTime() < 10 * 60 * 1000,
-                );
-                return (
-                  <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
-                        Last automated refresh
-                      </div>
-                      <div className="mt-1 font-medium">
-                        {lastCron ? (
-                          <>
-                            {lastCron.status} · <TimeAgo iso={lastCron.startedAt} />
-                          </>
-                        ) : (
-                          "none yet"
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
-                        Last manual refresh
-                      </div>
-                      <div className="mt-1 font-medium">
-                        {lastManual ? (
-                          <>
-                            {lastManual.status} · <TimeAgo iso={lastManual.startedAt} />
-                          </>
-                        ) : (
-                          "none yet"
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
-                        Scheduler
-                      </div>
-                      <div className="mt-1 font-medium">
-                        GitHub Actions · every 5 minutes
-                        <span className="block text-[10px] font-normal text-muted-strong">
-                          + Vercel daily 06:00 UTC backstop
-                        </span>
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-strong">
-                        Refresh lock
-                      </div>
-                      <div className="mt-1 font-medium">
-                        {activeLock ? (
-                          <span className="text-accent">
-                            Locked — {activeLock.trigger} refresh in progress
-                          </span>
-                        ) : (
-                          <span className="text-positive">Unlocked</span>
-                        )}
-                        <span className="block text-[10px] font-normal text-muted-strong">
-                          One refresh at a time · stale locks expire after 10 min
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="rounded-lg border border-border bg-surface px-4 py-3">
-                <div className="font-medium">Endpoint</div>
-                <code className="mt-1 block break-all font-mono text-[11px] text-muted">
-                  POST https://wachter-creator-campaign-dashboard.vercel.app/api/cron/refresh
-                </code>
-                <div className="mt-2 font-medium">Required header</div>
-                <code className="mt-1 block font-mono text-[11px] text-muted">
-                  Authorization: Bearer &lt;CRON_SECRET&gt;
-                </code>
-                <p className="mt-1 text-[11px] text-muted-strong">
-                  Use the CRON_SECRET value from the Vercel environment variables — it is never
-                  displayed here. Active schedule: every 5 minutes (<code>*/5 * * * *</code>) via GitHub Actions.
-                  Overlaps are impossible — a database-backed lock skips concurrent runs, and
-                  manual refreshes within 3 minutes of a success are declined (Force refresh
-                  bypasses the freshness check, never the lock).
-                </p>
-              </div>
-
-              <details className="rounded-lg border border-border bg-surface px-4 py-3">
-                <summary className="cursor-pointer font-medium">
-                  Option A — cron-job.org (no code, ~2 minutes)
-                </summary>
-                <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted">
-                  <li>Create a free account at cron-job.org → Create cronjob</li>
-                  <li>URL: the endpoint above · Method: POST · Schedule: every 10 minutes</li>
-                  <li>
-                    Advanced → Headers: add <code>Authorization</code> ={" "}
-                    <code>Bearer &lt;CRON_SECRET&gt;</code>
-                  </li>
-                  <li>Set request timeout to 300 seconds (refreshes take 2–4 minutes)</li>
-                </ol>
-              </details>
-
-              <details className="rounded-lg border border-border bg-surface px-4 py-3">
-                <summary className="cursor-pointer font-medium">
-                  Option B — GitHub Actions (already in the repo)
-                </summary>
-                <p className="mt-2 text-muted">
-                  <code>.github/workflows/refresh.yml</code> runs every 5 minutes (ACTIVE — repo is
-                  on GitHub with secrets configured). Add repo secret <code>CRON_SECRET</code> and repo variable{" "}
-                  <code>APP_URL</code> under Settings → Secrets and variables → Actions. The secret
-                  stays in GitHub Secrets — never in the workflow file.
-                </p>
-              </details>
-            </CardBody>
-          </Card>
+          <RefreshHealthPanel runs={data.refreshRuns} />
         </section>
 
         <section id="campaign">

@@ -8,6 +8,7 @@ import {
   evaluateRefreshGate,
   MANUAL_FRESHNESS_WINDOW_MS,
   REFRESH_LOCK_TTL_MS,
+  SCHEDULED_FRESHNESS_WINDOW_MS,
 } from "@/lib/refresh";
 import { describeCommentDelta } from "@/lib/format";
 import { makeRefreshRun } from "./helpers";
@@ -54,9 +55,8 @@ describe("evaluateRefreshGate — manual freshness throttle", () => {
       );
     }
   });
-  it("force bypasses freshness; cron is never freshness-blocked", () => {
+  it("force bypasses freshness", () => {
     expect(evaluateRefreshGate([recentSuccess], "force", NOW).action).toBe("run");
-    expect(evaluateRefreshGate([recentSuccess], "cron", NOW).action).toBe("run");
   });
   it("allows manual refresh after the window passes", () => {
     const older = makeRefreshRun({
@@ -65,6 +65,45 @@ describe("evaluateRefreshGate — manual freshness throttle", () => {
       finishedAt: ago(MANUAL_FRESHNESS_WINDOW_MS + 60_000),
     });
     expect(evaluateRefreshGate([older], "manual", NOW).action).toBe("run");
+  });
+});
+
+describe("evaluateRefreshGate — scheduled freshness throttle", () => {
+  it("skips a cron refresh when a success STARTED less than 4 minutes ago", () => {
+    const justRan = makeRefreshRun({
+      status: "success",
+      startedAt: ago(2 * 60_000),
+      finishedAt: ago(60_000),
+    });
+    const d = evaluateRefreshGate([justRan], "cron", NOW);
+    expect(d.action).toBe("skip");
+    if (d.action === "skip") expect(d.kind).toBe("fresh");
+  });
+  it("runs the next 5-minute tick even when the previous ~3-minute run only just finished", () => {
+    // Started 5 min ago, finished 2 min ago — measuring from finishedAt here
+    // would silently halve the 5-minute cadence; startedAt is the contract.
+    const longRun = makeRefreshRun({
+      status: "success",
+      startedAt: ago(SCHEDULED_FRESHNESS_WINDOW_MS + 60_000),
+      finishedAt: ago(2 * 60_000),
+    });
+    expect(evaluateRefreshGate([longRun], "cron", NOW).action).toBe("run");
+  });
+  it("partial successes also count as freshness", () => {
+    const partial = makeRefreshRun({
+      status: "partial",
+      startedAt: ago(60_000),
+      finishedAt: ago(30_000),
+    });
+    expect(evaluateRefreshGate([partial], "cron", NOW).action).toBe("skip");
+  });
+  it("script trigger is never freshness-blocked", () => {
+    const fresh = makeRefreshRun({
+      status: "success",
+      startedAt: ago(60_000),
+      finishedAt: ago(30_000),
+    });
+    expect(evaluateRefreshGate([fresh], "script", NOW).action).toBe("run");
   });
 });
 
@@ -83,9 +122,15 @@ describe("public read-only guarantees (source-level)", () => {
     expect(src).not.toContain("/api/refresh");
     expect(src).not.toContain("/api/cron/refresh");
   });
-  it("the public dashboard states the 5-minute auto-refresh", () => {
+  it("the public dashboard states the auto-refresh cadence only when the scheduler is verified", () => {
     const note = read("src/components/ui/auto-refresh-note.tsx");
-    expect(note).toContain("Auto-refreshes every 5 minutes");
+    expect(note).toContain("Auto-refreshes every");
+    // The cadence claim must be gated on verified scheduler metadata…
+    expect(note).toContain("SCHEDULER.verified");
+    // …and degrade honestly when the data ages past the thresholds.
+    expect(note).toContain("Refresh delayed, latest data shown");
+    expect(note).toContain("Scheduler may be delayed");
+    expect(note).toContain("Last successful refresh");
   });
   it("/api/refresh requires the admin session", () => {
     const src = read("src/app/api/refresh/route.ts");
@@ -99,14 +144,17 @@ describe("public read-only guarantees (source-level)", () => {
 });
 
 describe("5-minute scheduler wiring", () => {
-  it("GitHub Actions workflow is a manual fallback only (cron-job.org is primary)", () => {
+  it("GitHub Actions workflow is a 30-minute best-effort backup (cron-job.org is primary)", () => {
     const wf = readFileSync(
       path.join(process.cwd(), ".github/workflows/refresh.yml"),
       "utf-8",
     );
-    // The schedule lives on cron-job.org (job 7793727); GitHub's cron was
-    // removed for unreliability and must not silently come back.
-    expect(wf).not.toContain("schedule:");
+    // Primary cadence lives on cron-job.org (job 7793727). GitHub's cron is
+    // backup-only at 30 minutes — the unreliable 5-minute schedule must not
+    // silently come back and compete with the primary.
+    expect(wf).toContain('cron: "*/30 * * * *"');
+    expect(wf).not.toContain('cron: "*/5');
+    expect(wf).toContain("BACKUP");
     expect(wf).toContain("workflow_dispatch");
     expect(wf).toContain("Authorization: Bearer ${CRON_SECRET}");
     expect(wf).toContain("secrets.CRON_SECRET");

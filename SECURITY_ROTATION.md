@@ -13,6 +13,7 @@ Actions secrets for the scheduled refresh. Never commit secrets; run
 | Supabase personal access token (`sbp_…`) | **Rotate when convenient** | pasted into a chat during setup |
 | Supabase **database password** | ✅ already rotated (2026-06-11) | reset via the Management API during deployment; old value invalid |
 | `CRON_SECRET` | no exposure | generated locally, never shared |
+| `CRONJOB_ORG_API_KEY` (cron-job.org account API key) | **Rotate when convenient** | pasted into a chat during scheduler setup; lives in `.env.local` + Vercel env (sensitive). Rotate at console.cron-job.org → Settings → API |
 | `ADMIN_PASSWORD` | no exposure | generated locally, shown once in a private session |
 
 ## Rotating the Apify token

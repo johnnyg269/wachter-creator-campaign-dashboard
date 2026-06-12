@@ -31,6 +31,15 @@ const globalForRefresh = globalThis as unknown as { __wachterRefreshing?: Promis
 export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
 /** Normal manual refreshes are pointless sooner than this after a success. */
 export const MANUAL_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
+/**
+ * Scheduled (cron) refreshes skip when a success STARTED less than this long
+ * ago. Measured from startedAt (the data's as-of time), not finishedAt — a
+ * ~3-minute refresh finishing at :03 must not make the :05 tick skip (that
+ * would silently halve the 5-minute cadence), but a 30-minute GitHub Actions
+ * backup firing right after a cron-job.org run skips instead of double-
+ * spending Apify credits.
+ */
+export const SCHEDULED_FRESHNESS_WINDOW_MS = 4 * 60 * 1000;
 
 export type RefreshTrigger = "manual" | "cron" | "script" | "force";
 
@@ -45,6 +54,7 @@ export type RefreshGateDecision =
  *    overlapping Apify spend, ever)
  *  - runs stuck "running" past the TTL are expired (crash recovery)
  *  - plain manual refreshes within 3 minutes of a success are skipped;
+ *    scheduled (cron) refreshes skip when a success started <4 minutes ago;
  *    "force" (admin-only) bypasses freshness but never the lock
  */
 export function evaluateRefreshGate(
@@ -68,13 +78,20 @@ export function evaluateRefreshGate(
       staleRunIds,
     };
   }
-  if (trigger === "manual") {
+  if (trigger === "manual" || trigger === "cron") {
     const lastSuccess = recentRuns
       .filter((r) => r.status === "success" || r.status === "partial")
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
     if (lastSuccess) {
-      const at = lastSuccess.finishedAt ?? lastSuccess.startedAt;
-      if (now.getTime() - new Date(at).getTime() < MANUAL_FRESHNESS_WINDOW_MS) {
+      // Manual: measured from finish (don't let an impatient re-click burn
+      // credits). Scheduled: measured from start (see constant docs above).
+      const at =
+        trigger === "manual"
+          ? (lastSuccess.finishedAt ?? lastSuccess.startedAt)
+          : lastSuccess.startedAt;
+      const window =
+        trigger === "manual" ? MANUAL_FRESHNESS_WINDOW_MS : SCHEDULED_FRESHNESS_WINDOW_MS;
+      if (now.getTime() - new Date(at).getTime() < window) {
         return {
           action: "skip",
           kind: "fresh",

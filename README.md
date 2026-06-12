@@ -61,7 +61,7 @@ Four ways to trigger it:
 1. **UI** — the Refresh button in the header (calls `POST /api/refresh`).
 2. **API** — `curl -X POST http://localhost:3000/api/refresh`
 3. **CLI** — `npm run refresh` (same pipeline, prints a per-platform report).
-4. **Cron** — `GET /api/cron/refresh`, protected by `CRON_SECRET`. `vercel.json` ships a `*/10 * * * *` schedule. See [DEPLOYMENT.md](./DEPLOYMENT.md) for cron details and the external-scheduler fallback.
+4. **Cron** — `GET`/`POST /api/cron/refresh`, protected by `CRON_SECRET` (bearer header). The endpoint answers `202` immediately and refreshes in the background. **Primary scheduler: cron-job.org** ("Wachter Campaign Dashboard Refresh", every 5 minutes); GitHub Actions runs as a 30-minute best-effort backup. Public viewers are read-only — they never trigger refreshes or Apify spend; a database-backed lock prevents overlapping runs; all viewers read the same shared Supabase data. See [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 Concurrent triggers are serialized — a second trigger while one is running awaits the in-flight run.
 

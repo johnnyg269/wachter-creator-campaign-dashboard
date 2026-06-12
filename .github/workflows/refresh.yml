@@ -1,8 +1,10 @@
-# Manual fallback for the campaign refresh. The primary scheduler is
-# cron-job.org (job 7793727, every 5 minutes, Authorization header configured
-# there) — GitHub's cron schedule proved unreliable, so it was removed here.
-# Trigger this manually from the Actions tab if cron-job.org is down.
-# Overlap-safe: the app skips a run if one is already in progress.
+# BEST-EFFORT BACKUP scheduler for the campaign refresh — NOT the primary.
+# The primary scheduler is cron-job.org (job 7793727, every 5 minutes,
+# Authorization header configured there). GitHub's cron proved unreliable as
+# a primary (observed gaps of 1.4–2.2 hours), so this runs only every 30
+# minutes as a safety net and can also be triggered manually from the
+# Actions tab. Overlap- and credit-safe: the app's refresh gate skips when a
+# refresh is already running or data is fresher than 4 minutes.
 #
 # Setup (after pushing this repo to GitHub):
 #   Repo → Settings → Secrets and variables → Actions:
@@ -14,6 +16,8 @@
 name: Refresh campaign data
 
 on:
+  schedule:
+    - cron: "*/30 * * * *" # backup only — primary cadence lives on cron-job.org
   workflow_dispatch: {}
 
 jobs:
