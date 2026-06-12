@@ -26,6 +26,12 @@ export function RefreshButton({
   const [message, setMessage] = useState<string | null>(null);
 
   async function refresh() {
+    if (force) {
+      const ok = window.confirm(
+        "Force refresh may run multiple Apify actors and use credits. Continue?",
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     setMessage(null);
     try {

@@ -21,26 +21,34 @@ export const SCHEDULER: SchedulerInfo = {
   type: "cron-job.org",
   jobId: 7793727,
   jobName: "Wachter Campaign Dashboard Refresh",
-  cadenceMinutes: 5,
+  // Cost control (2026-06-12): the job PINGS every 30 minutes during active
+  // hours (06:00–23:59 America/New_York), and the app's refresh policy runs a
+  // FULL refresh every 60 minutes — this is the cadence the public page
+  // promises. The 5-minute cadence burned ~$20/day in Apify credits.
+  cadenceMinutes: 60,
   verified: true, // verified live 2026-06-12: 202 responses + cron-triggered runs in Supabase
   backup: "GitHub Actions every 30 min (best-effort backup)",
 };
 
-/** Public wording thresholds (Part 7): minutes since last successful refresh. */
-export const REFRESH_DELAYED_AFTER_MIN = 8;
-export const SCHEDULER_DELAYED_AFTER_MIN = 15;
+/** Public wording thresholds: minutes since last successful refresh.
+ * Derived from the full-refresh cadence (1.5× / 2.5×). */
+export const REFRESH_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 1.5;
+export const SCHEDULER_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 2.5;
 
 export type RefreshHealth = "healthy" | "delayed" | "failed" | "unknown";
 
 export function computeRefreshHealth(args: {
   lastSuccessAt: string | null;
   lastAttemptStatus: string | null;
+  /** During quiet hours an old success is expected, not a problem. */
+  quietHours?: boolean;
   now?: Date;
 }): RefreshHealth {
   const { lastSuccessAt, lastAttemptStatus } = args;
   const now = args.now ?? new Date();
   if (!lastSuccessAt) return lastAttemptStatus === "failed" ? "failed" : "unknown";
   const ageMin = (now.getTime() - new Date(lastSuccessAt).getTime()) / 60_000;
+  if (args.quietHours && ageMin <= 9 * 60) return "healthy"; // paused overnight
   if (ageMin <= REFRESH_DELAYED_AFTER_MIN) return "healthy";
   if (lastAttemptStatus === "failed") return "failed";
   return "delayed";

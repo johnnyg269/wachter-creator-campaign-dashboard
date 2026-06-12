@@ -16,36 +16,46 @@ import {
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf-8");
 
 describe("scheduler metadata", () => {
-  it("cron-job.org is the primary scheduler at a 5-minute cadence", () => {
+  it("cron-job.org is the primary scheduler at a 60-minute full-refresh cadence", () => {
     expect(SCHEDULER.type).toBe("cron-job.org");
-    expect(SCHEDULER.cadenceMinutes).toBe(5);
+    expect(SCHEDULER.cadenceMinutes).toBe(60);
     expect(SCHEDULER.jobId).toBeGreaterThan(0);
     expect(SCHEDULER.jobName).toBe("Wachter Campaign Dashboard Refresh");
     expect(SCHEDULER.backup).toContain("GitHub Actions");
   });
-  it("public delay thresholds are 8 and 15 minutes", () => {
-    expect(REFRESH_DELAYED_AFTER_MIN).toBe(8);
-    expect(SCHEDULER_DELAYED_AFTER_MIN).toBe(15);
+  it("public delay thresholds scale with the cadence (1.5x / 2.5x)", () => {
+    expect(REFRESH_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 1.5);
+    expect(SCHEDULER_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 2.5);
   });
 });
 
 describe("computeRefreshHealth", () => {
   const NOW = new Date("2026-06-12T12:00:00.000Z");
   const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
-  it("healthy when the last success is within 8 minutes", () => {
+  it("healthy when the last success is within 1.5x the cadence", () => {
     expect(
-      computeRefreshHealth({ lastSuccessAt: ago(3), lastAttemptStatus: "success", now: NOW }),
+      computeRefreshHealth({ lastSuccessAt: ago(45), lastAttemptStatus: "success", now: NOW }),
     ).toBe("healthy");
   });
-  it("delayed when the last success is older than 8 minutes", () => {
+  it("delayed when the last success is older than 1.5x the cadence", () => {
     expect(
-      computeRefreshHealth({ lastSuccessAt: ago(12), lastAttemptStatus: "success", now: NOW }),
+      computeRefreshHealth({ lastSuccessAt: ago(120), lastAttemptStatus: "success", now: NOW }),
     ).toBe("delayed");
   });
   it("failed when stale AND the latest attempt failed", () => {
     expect(
-      computeRefreshHealth({ lastSuccessAt: ago(20), lastAttemptStatus: "failed", now: NOW }),
+      computeRefreshHealth({ lastSuccessAt: ago(200), lastAttemptStatus: "failed", now: NOW }),
     ).toBe("failed");
+  });
+  it("an overnight-old success is healthy during quiet hours", () => {
+    expect(
+      computeRefreshHealth({
+        lastSuccessAt: ago(5 * 60),
+        lastAttemptStatus: "skipped",
+        quietHours: true,
+        now: NOW,
+      }),
+    ).toBe("healthy");
   });
   it("unknown with no data at all", () => {
     expect(computeRefreshHealth({ lastSuccessAt: null, lastAttemptStatus: null, now: NOW })).toBe(

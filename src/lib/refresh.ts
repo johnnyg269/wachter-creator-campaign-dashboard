@@ -24,6 +24,13 @@ import { applyMonotonicViews, engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
 import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./alerts";
+import {
+  decideScheduledRefresh,
+  encodeRunMode,
+  getRefreshPolicyConfig,
+  localDateKey,
+  type RunMode,
+} from "./refresh-policy";
 
 const globalForRefresh = globalThis as unknown as { __wachterRefreshing?: Promise<RefreshReport> };
 
@@ -137,7 +144,7 @@ export function runRefresh(
 async function recordSkip(
   store: Store,
   trigger: RefreshTrigger,
-  decision: Extract<RefreshGateDecision, { action: "skip" }>,
+  decision: { kind: string; reason: string },
 ): Promise<RefreshReport> {
   const now = new Date().toISOString();
   const run = await store.createRefreshRun({
@@ -183,6 +190,31 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   if (decision.action === "skip") {
     return recordSkip(store, trigger, decision);
   }
+
+  // ── Cost-control policy (scheduled runs only): quiet hours, budget cap,
+  // and tiered cadences. Manual/force/script bypass policy, never the lock.
+  let mode: RunMode = { light: false, discovery: true, comments: true };
+  if (trigger === "cron") {
+    const cfg = getRefreshPolicyConfig();
+    const attempts = await store.listCollectionAttempts(500);
+    const todayKey = localDateKey(new Date(), cfg.quietTimezone);
+    const todaysActorRuns = attempts.filter(
+      (a) => localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === todayKey,
+    ).length;
+    const policy = decideScheduledRefresh({
+      recentRuns: await store.listRefreshRuns(60),
+      todaysActorRuns,
+      cfg,
+    });
+    if (policy.action === "skip") {
+      return recordSkip(store, trigger, { kind: policy.kind, reason: policy.reason });
+    }
+    mode = policy.mode;
+    log.push(`policy: ${policy.reason}`);
+  }
+  // First log entry encodes the mode — the policy layer parses this from
+  // RefreshRun.rawLog to know when discovery/comments last ran.
+  log.unshift(encodeRunMode(mode));
 
   const run = await store.createRefreshRun({
     startedAt,
@@ -233,7 +265,7 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   };
 
   for (const platform of PLATFORMS) {
-    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id);
+    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode);
     report.platforms.push(platformReport);
     if (platformReport.status === "failed" && platformReport.reason) {
       report.errors.push(`${platform}: ${platformReport.reason}`);
@@ -274,12 +306,42 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   return report;
 }
 
+/**
+ * Hot-video subset for light refreshes: top-6 by latest confirmed views,
+ * anything posted in the last 24h. Cold/warm videos wait for the next full.
+ */
+async function pickHotVideos(store: Store, videos: Video[]): Promise<Video[]> {
+  const latestViews = new Map<string, number>();
+  for (const v of videos) {
+    const snaps = await store.listSnapshots(v.id);
+    const confirmed = snaps
+      .filter((sn) => sn.views !== null)
+      .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0];
+    if (confirmed?.views !== null && confirmed !== undefined) {
+      latestViews.set(v.id, confirmed.views as number);
+    }
+  }
+  const topIds = new Set(
+    [...latestViews.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([id]) => id),
+  );
+  const now = Date.now();
+  return videos.filter((v) => {
+    if (topIds.has(v.id)) return true;
+    const postedAt = v.publishedAt ?? v.firstTrackedAt;
+    return now - new Date(postedAt).getTime() <= 24 * 3_600_000;
+  });
+}
+
 async function refreshPlatform(
   store: Store,
   campaign: Campaign,
   platform: Platform,
   log: string[],
   refreshRunId: string,
+  mode: RunMode = { light: false, discovery: true, comments: true },
 ): Promise<RefreshReport["platforms"][number]> {
   const out: RefreshReport["platforms"][number] = {
     platform,
@@ -318,6 +380,34 @@ async function refreshPlatform(
 
   const since = effectiveStartDate(campaign);
 
+  // Cost policy shaping:
+  //  - light mode: hot videos only; YouTube's channel sweep IS its metrics
+  //    fetch, so YouTube sits light cycles out entirely.
+  //  - discovery off: drop the profile sweep where the direct-URL surface can
+  //    cover metrics (everywhere except YouTube) — no new-post hunting.
+  let targetVideos = videos;
+  let targetProfile: typeof profile | null = profile;
+  if (mode.light) {
+    if (platform === "youtube") {
+      out.status = "skipped";
+      out.reason = "light refresh — channel sweep deferred to the next full refresh";
+      log.push(`${platform}: ${out.reason}`);
+      return out;
+    }
+    targetProfile = null;
+    targetVideos = await pickHotVideos(store, videos);
+    if (targetVideos.length === 0) {
+      out.status = "skipped";
+      out.reason = "light refresh — no hot videos to update";
+      log.push(`${platform}: ${out.reason}`);
+      return out;
+    }
+    log.push(`${platform}: light refresh targeting ${targetVideos.length} hot video(s)`);
+  } else if (!mode.discovery && platform !== "youtube") {
+    targetProfile = null;
+    log.push(`${platform}: discovery sweep skipped this cycle (not due)`);
+  }
+
   try {
     let fetched: {
       videos: NormalizedVideo[];
@@ -325,7 +415,7 @@ async function refreshPlatform(
       attempts: import("./providers/types").AttemptDraft[];
     };
     if (provider.fetchPlatform) {
-      fetched = await provider.fetchPlatform(profile, videos, since);
+      fetched = await provider.fetchPlatform(targetProfile, targetVideos, since);
     } else {
       // Per-video fallback path for providers without a batch implementation.
       fetched = { videos: [], commentsByVideo: {}, attempts: [] };
@@ -423,7 +513,9 @@ async function refreshPlatform(
       });
       out.videosUpdated++;
 
-      const comments = [...commentKeys].flatMap((k) => fetched.commentsByVideo[k] ?? []);
+      const comments = mode.comments
+        ? [...commentKeys].flatMap((k) => fetched.commentsByVideo[k] ?? [])
+        : [];
       for (const c of comments) {
         const tags = tagComment(c.text);
         const cls = classifyComment(c.text, tags);

@@ -6,7 +6,7 @@
 // the last success ages past the thresholds the note degrades to a delayed
 // status instead of repeating a cadence promise the data contradicts.
 
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Moon, RefreshCw } from "lucide-react";
 import { getStore } from "@/lib/store";
 import { TimeAgo } from "@/components/ui/time-ago";
 import {
@@ -14,6 +14,7 @@ import {
   SCHEDULER,
   SCHEDULER_DELAYED_AFTER_MIN,
 } from "@/lib/scheduler";
+import { getRefreshPolicyConfig, isQuietHours } from "@/lib/refresh-policy";
 
 export async function AutoRefreshNote({
   variant = "pill",
@@ -37,6 +38,41 @@ export async function AutoRefreshNote({
   const ageMin = lastSuccessAt ? (now - new Date(lastSuccessAt).getTime()) / 60_000 : null;
   const delayed = ageMin !== null && ageMin > REFRESH_DELAYED_AFTER_MIN;
   const veryDelayed = ageMin !== null && ageMin > SCHEDULER_DELAYED_AFTER_MIN;
+
+  // Overnight pause is intentional, never a warning state.
+  const quiet = isQuietHours(new Date(now), getRefreshPolicyConfig());
+  if (quiet) {
+    const body = (
+      <>
+        Refresh paused overnight · resumes at 6:00 AM ET
+        {lastSuccessAt && (
+          <span className="text-muted-strong">
+            {" "}· Last successful refresh <TimeAgo iso={lastSuccessAt} />
+          </span>
+        )}
+      </>
+    );
+    if (variant === "inline") {
+      return (
+        <span
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
+          title="Scheduled refreshes pause from 12:00 AM to 6:00 AM Eastern to save collection credits. The dashboard keeps showing the latest saved data."
+        >
+          <Moon size={12} className="text-muted-strong" aria-hidden />
+          {body}
+        </span>
+      );
+    }
+    return (
+      <span
+        className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
+        title="Scheduled refreshes pause from 12:00 AM to 6:00 AM Eastern to save collection credits. The dashboard keeps showing the latest saved data."
+      >
+        <Moon size={12} className="text-muted-strong" aria-hidden />
+        {body}
+      </span>
+    );
+  }
 
   if (SCHEDULER.verified && !delayed) {
     if (variant === "inline") {

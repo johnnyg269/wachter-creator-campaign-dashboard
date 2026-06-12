@@ -12,6 +12,14 @@ import {
   getSchedulerLiveStatus,
   type RefreshHealth,
 } from "@/lib/scheduler";
+import {
+  decodeRunMode,
+  getRefreshPolicyConfig,
+  isQuietHours,
+  localDateKey,
+  summarizeBudget,
+} from "@/lib/refresh-policy";
+import { getStore } from "@/lib/store";
 import type { RefreshRun } from "@/lib/types";
 
 const HEALTH_STYLE: Record<RefreshHealth, { label: string; cls: string }> = {
@@ -37,6 +45,35 @@ function runDurationSec(r: RefreshRun): number | null {
 
 export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
   const live = await getSchedulerLiveStatus();
+  const cfg = getRefreshPolicyConfig();
+  const nowDate = new Date();
+  const quiet = isQuietHours(nowDate, cfg);
+
+  // Today's actor runs (budget day = quiet-hours timezone).
+  const actorAttempts = await getStore().listCollectionAttempts(500);
+  const todayKey = localDateKey(nowDate, cfg.quietTimezone);
+  const todaysActorRuns = actorAttempts.filter(
+    (a) => localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === todayKey,
+  ).length;
+  const budget = summarizeBudget({ todaysActorRuns, now: nowDate, cfg });
+
+  // Mode bookkeeping from run logs.
+  const successRuns = runs.filter((r) => r.status === "success" || r.status === "partial");
+  const lastModeRun = successRuns.find((r) => decodeRunMode(r) !== null) ?? successRuns[0] ?? null;
+  const lastMode = lastModeRun ? decodeRunMode(lastModeRun) : null;
+  const lastFullAt =
+    successRuns.find((r) => !(decodeRunMode(r)?.light ?? false))?.startedAt ?? null;
+  const lastDiscoveryAt =
+    successRuns.find((r) => decodeRunMode(r)?.discovery ?? true)?.startedAt ?? null;
+  const lastCommentsAt =
+    successRuns.find((r) => decodeRunMode(r)?.comments ?? true)?.startedAt ?? null;
+  const lastQuietSkip = runs.find(
+    (r) => r.status === "skipped" && r.rawLog?.[0]?.includes("quiet hours"),
+  );
+  const nextDue = (lastAt: string | null, intervalMin: number) =>
+    lastAt
+      ? new Date(new Date(lastAt).getTime() + intervalMin * 60_000).toISOString()
+      : new Date().toISOString();
 
   const attempts = runs.filter((r) => r.status !== "skipped");
   const lastAttempt = attempts[0] ?? null;
@@ -60,6 +97,7 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
   const health = computeRefreshHealth({
     lastSuccessAt: lastSuccess ? (lastSuccess.finishedAt ?? lastSuccess.startedAt) : null,
     lastAttemptStatus: lastAttempt?.status ?? null,
+    quietHours: quiet,
   });
   const h = HEALTH_STYLE[health];
 
@@ -74,7 +112,7 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
           <Stat label="Refresh health">
             <span className={h.cls}>{h.label}</span>
             <span className="block text-[10px] font-normal text-muted-strong">
-              Healthy = success within 8 min of cadence
+              Healthy = success within 1.5× the refresh cadence
             </span>
           </Stat>
           <Stat label="Active scheduler">
@@ -187,6 +225,53 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
           </Stat>
         </div>
 
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Apify cost today (est.)">
+            <span className={budget.capReached ? "text-negative" : budget.overTarget ? "text-warning" : "text-positive"}>
+              ${budget.estSpendUsd.toFixed(2)}
+            </span>
+            <span className="block text-[10px] font-normal text-muted-strong">
+              {budget.runsToday} actor runs · projected ${budget.projectedDayUsd.toFixed(2)}/day ·
+              target ${budget.targetUsd.toFixed(2)} · hard cap ${budget.hardCapUsd.toFixed(2)}
+              {budget.capReached && " — CAP REACHED, scheduled refreshes paused"}
+            </span>
+          </Stat>
+          <Stat label="Latest refresh mode">
+            {lastMode ? (lastMode.light ? "Light (hot videos)" : "Full") : "Full (pre-policy)"}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              {lastMode
+                ? `discovery ${lastMode.discovery ? "on" : "off"} · comments ${lastMode.comments ? "on" : "off"}`
+                : "mode tracking starts with the next refresh"}
+            </span>
+          </Stat>
+          <Stat label="Next due">
+            full {formatDateTime(nextDue(lastFullAt, cfg.fullIntervalMin))}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              discovery {formatDateTime(nextDue(lastDiscoveryAt, cfg.discoveryIntervalMin))} ·
+              comments {formatDateTime(nextDue(lastCommentsAt, cfg.commentsIntervalMin))}
+            </span>
+          </Stat>
+          <Stat label="Quiet hours">
+            {cfg.quietHoursEnabled ? (
+              <span className={quiet ? "text-accent" : "text-positive"}>
+                {quiet ? "PAUSED now (overnight)" : "Enabled"}
+              </span>
+            ) : (
+              "Disabled"
+            )}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              {String(cfg.quietStartHour).padStart(2, "0")}:00–
+              {String(cfg.quietEndHour).padStart(2, "0")}:00 {cfg.quietTimezone} · manual force
+              refresh stays available (cost warning shown)
+              {lastQuietSkip && (
+                <>
+                  {" "}· last overnight skip <TimeAgo iso={lastQuietSkip.startedAt} />
+                </>
+              )}
+            </span>
+          </Stat>
+        </div>
+
         <div className="rounded-lg border border-border bg-surface px-4 py-3">
           <div className="font-medium">Endpoint</div>
           <code className="mt-1 block break-all font-mono text-[11px] text-muted">
@@ -197,8 +282,7 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
             Authorization: Bearer &lt;CRON_SECRET&gt;
           </code>
           <p className="mt-1 text-[11px] text-muted-strong">
-            The endpoint answers 202 immediately and refreshes in the background (cron-job.org
-            free tier caps requests at 30s). Secrets are never displayed here. Overlaps are
+            The endpoint answers 202 immediately and refreshes in the background. cron-job.org pings every 30 minutes (06:00–23:59 ET); the app&apos;s cost policy decides whether a full refresh, discovery, or comments are due — or skips cleanly. Secrets are never displayed here. Overlaps are
             impossible — the database-backed lock skips concurrent runs; scheduled refreshes
             skip when a success started less than 4 minutes ago; manual refreshes within 3
             minutes of a success are declined (Force refresh bypasses freshness, never the
