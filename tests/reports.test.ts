@@ -332,3 +332,64 @@ describe("Executive Summary is board-level, not operational", () => {
     expect(studio).toContain("Recruiting interest");
   });
 });
+
+// ── Export / presentation workflow (PowerPoint-ready) ────────────────────────
+
+describe("Reports export & presentation workflow", () => {
+  const studio = read("src/app/reports/reports-studio.tsx");
+  const css = read("src/app/globals.css");
+  const pkg = JSON.parse(read("package.json"));
+
+  it("Presentation Mode is a clean, fully-opaque screenshot workspace", () => {
+    // Solid backdrop (no alpha) so the underlying page never bleeds into a
+    // screenshot. The old rgba(...,0.97) ghosted the sidebar through.
+    expect(studio).toContain('background: "#04060b"');
+    expect(studio).not.toContain("rgba(3,5,9,0.97)");
+    // Full-screen overlay that is excluded from print and centers the slide.
+    expect(studio).toContain("report-no-print fixed inset-0 z-[100]");
+    // Accessible dialog semantics.
+    expect(studio).toContain('role="dialog"');
+    expect(studio).toContain('aria-modal="true"');
+  });
+
+  it("Presentation Mode keeps a small exit control + Esc, no filters inside", () => {
+    expect(studio).toContain('aria-label="Exit presentation"');
+    expect(studio).toContain('if (e.key === "Escape") closePresent()');
+    // The filter controls (Segmented/Dropdown) live OUTSIDE the overlay — the
+    // overlay only renders <Slide/> plus nav/exit chrome, never the filter bar.
+    const overlayStart = studio.indexOf("Presentation overlay");
+    const overlay = studio.slice(overlayStart);
+    expect(overlay).not.toContain("<Segmented");
+    expect(overlay).not.toContain("<Dropdown");
+  });
+
+  it("Print mode prints only the canvas, hides chrome, landscape, one page, dark", () => {
+    const printBlock = css.slice(css.indexOf("@media print"));
+    expect(printBlock).toContain("size: landscape");
+    expect(printBlock).toContain(".report-no-print");
+    expect(printBlock).toContain("display: none");
+    // The canvas (and only it) stays visible and keeps its dark colors.
+    expect(printBlock).toContain(".report-print-root");
+    expect(printBlock).toContain("print-color-adjust: exact");
+    // No mid-slide page breaks — the Executive Summary fits one page.
+    expect(printBlock).toContain("break-inside: avoid");
+  });
+
+  it("shows landscape print guidance and PowerPoint screenshot guidance", () => {
+    expect(studio).toContain("use landscape orientation for best results");
+    expect(studio).toContain("Best for PowerPoint");
+    expect(studio).toContain("take a screenshot");
+  });
+
+  it("does NOT ship a fragile client-side PNG exporter (Present+screenshot is higher fidelity)", () => {
+    // PNG export via html-to-image hung on font embedding; intentionally skipped.
+    expect(pkg.dependencies?.["html-to-image"]).toBeUndefined();
+    expect(studio).not.toContain("html-to-image");
+    expect(studio).not.toContain("toPng");
+  });
+
+  it("Presentation overlay is the only print-hidden full-screen layer (read-only, no refresh)", () => {
+    expect(studio).not.toContain("RefreshButton");
+    expect(studio).not.toMatch(/fetch\(/);
+  });
+});

@@ -262,6 +262,11 @@ body {
     margin: 0 !important;
     padding: 0 !important;
   }
+  /* The in-flow wrapper carries a screen-scale height; let print size to the
+     canvas itself so the 16:9 slide is never cropped on the page. */
+  .report-print-root > div {
+    height: auto !important;
+  }
   /* Hide the filter bar / toolbar — only the slide prints. */
   .report-no-print {
     display: none !important;
@@ -270,6 +275,9 @@ body {
     transform: scale(0.8) !important;
     transform-origin: top left !important;
     box-shadow: none !important;
+    /* Keep the whole Executive Summary on a single page — no mid-slide breaks. */
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
   /* Force the dark report colors to render in print (Save as PDF). */
   .report-canvas,

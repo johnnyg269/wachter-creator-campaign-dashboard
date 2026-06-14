@@ -770,7 +770,7 @@ export function ReportsStudio({
   useEffect(() => {
     if (!presenting) return;
     const measure = () =>
-      setPresScale(Math.min(window.innerWidth / CANVAS_W, window.innerHeight / CANVAS_H) * 0.92);
+      setPresScale(Math.min(window.innerWidth / CANVAS_W, window.innerHeight / CANVAS_H) * 0.94);
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
@@ -809,22 +809,27 @@ export function ReportsStudio({
               Printable, screenshot-ready campaign reports — 16:9, optimized for 1920×1080.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] font-medium text-foreground transition-colors hover:border-border-strong"
-            >
-              <Printer size={14} /> Print / Save PDF
-            </button>
-            <button
-              type="button"
-              onClick={openPresent}
-              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
-              style={{ borderColor: "var(--accent)", background: "var(--accent)" }}
-            >
-              <Projector size={14} /> Present
-            </button>
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] font-medium text-foreground transition-colors hover:border-border-strong"
+              >
+                <Printer size={14} /> Print / Save PDF
+              </button>
+              <button
+                type="button"
+                onClick={openPresent}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
+                style={{ borderColor: "var(--accent)", background: "var(--accent)" }}
+              >
+                <Projector size={14} /> Present
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-strong">
+              Print: use landscape orientation for best results.
+            </p>
           </div>
         </div>
 
@@ -857,14 +862,28 @@ export function ReportsStudio({
         </div>
       </div>
 
-      <p className="report-no-print mt-4 text-center text-[11px] text-muted-strong">
-        Tip: use Present for a full-screen view (← → to switch reports, Esc to exit), or Print / Save PDF for a one-page export.
-        Screenshot the slide for a clean 16:9 image.
-      </p>
+      <div className="report-no-print mx-auto mt-4 max-w-2xl text-center text-[11px] leading-relaxed text-muted-strong">
+        <p>
+          <span className="font-medium text-muted">Best for PowerPoint:</span> open Presentation Mode,
+          take a screenshot, and paste it into a 16:9 slide.
+        </p>
+        <p className="mt-1">
+          For a document, use <span className="font-medium text-muted">Print / Save PDF</span> in landscape
+          orientation. Presentation Mode supports ← → to switch reports and Esc to exit.
+        </p>
+      </div>
 
-      {/* Presentation overlay */}
+      {/* Presentation overlay — a clean, fully-opaque screenshot workspace.
+          Solid backdrop (no page bleed-through), centered 16:9 slide, minimal
+          chrome (exit + prev/next live OUTSIDE the slide). */}
       {presenting && (
-        <div className="report-no-print fixed inset-0 z-[100] flex items-center justify-center" style={{ background: "rgba(3,5,9,0.97)" }}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Report presentation"
+          className="report-no-print fixed inset-0 z-[100] flex select-none items-center justify-center"
+          style={{ background: "#04060b" }}
+        >
           <button
             type="button"
             onClick={closePresent}
