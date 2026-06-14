@@ -11,6 +11,7 @@ import { useState } from "react";
 import clsx from "clsx";
 import { Layers, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { SuccessCheck } from "@/components/ui/success-check";
 import { formatCompact, formatNumber } from "@/lib/format";
 
 export interface EpisodeRollup {
@@ -50,6 +51,12 @@ export function EpisodeManager({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Transient success-check confirmation after a completed action.
+  const [flash, setFlash] = useState<string | null>(null);
+  const showFlash = (msg: string) => {
+    setFlash(msg);
+    setTimeout(() => setFlash(null), 2500);
+  };
 
   // Create form
   const [newName, setNewName] = useState("");
@@ -88,6 +95,7 @@ export function EpisodeManager({
     if (ok) {
       setNewName("");
       setNewDescription("");
+      showFlash("Concept created");
     }
   };
 
@@ -98,7 +106,10 @@ export function EpisodeManager({
         description: editDescription.trim() || null,
       }),
     );
-    if (ok) setEditingId(null);
+    if (ok) {
+      setEditingId(null);
+      showFlash("Saved");
+    }
   };
 
   const confirmDelete = async (id: string) => {
@@ -110,6 +121,7 @@ export function EpisodeManager({
     if (ok) {
       setDeletingId(null);
       setReplacementId("");
+      showFlash("Concept deleted");
     }
   };
 
@@ -123,6 +135,15 @@ export function EpisodeManager({
         {error && (
           <div className="rounded-lg border border-negative/40 bg-[rgba(248,113,113,0.08)] px-3 py-2 text-negative">
             {error}
+          </div>
+        )}
+        {flash && (
+          <div
+            role="status"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-positive/40 bg-[rgba(52,211,153,0.08)] px-3 py-1.5 text-positive"
+          >
+            <SuccessCheck show size={14} />
+            {flash}
           </div>
         )}
 

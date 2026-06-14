@@ -4,6 +4,7 @@ import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import "slot-text/style.css";
 import { AppShell } from "@/components/layout/app-shell";
+import { getOpenAlertCount } from "@/lib/queries";
 
 // Inter is the app's single text face — variable font, weights 400–700 in
 // use. Tabular numerals are opted into per-metric via CSS, not globally.
@@ -33,18 +34,20 @@ export const metadata: Metadata = {
   manifest: "/site.webmanifest",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Open-alert count for the sidebar notification badge (resilient: 0 on error).
+  const alertCount = await getOpenAlertCount();
   return (
     <html
       lang="en"
       className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col page-glow">
-        <AppShell>{children}</AppShell>
+        <AppShell alertCount={alertCount}>{children}</AppShell>
         {/* Vercel Web Analytics — privacy-friendly, no cookies. Renders a tiny
             beacon script only in production; a no-op in dev. Enabled in the
             Vercel dashboard; this component is what actually emits pageviews. */}

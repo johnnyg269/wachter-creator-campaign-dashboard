@@ -76,6 +76,21 @@ export interface HealthSummary {
   anyLive: boolean;
 }
 
+/**
+ * Cheap open-alert count for the sidebar notification badge. Deliberately does
+ * NOT seed or resolve providers — just counts open alerts. Resilient: any error
+ * (or no DB) returns 0 so the layout never breaks.
+ */
+export async function getOpenAlertCount(): Promise<number> {
+  try {
+    const store = getStore();
+    const open = await store.listAlerts("open");
+    return open.length;
+  } catch {
+    return 0;
+  }
+}
+
 export async function getHealth(): Promise<HealthSummary> {
   const store = getStore();
   await ensureSeedData(store);

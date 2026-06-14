@@ -686,6 +686,23 @@ export function ReportsStudio({
   const [metric, setMetric] = useState<MetricFocus>(initialFilters.metric);
   const [type, setType] = useState<ReportType>(initialFilters.type);
   const [presenting, setPresenting] = useState(false);
+  // Modal open/close (transitions.dev #06) for the presentation overlay: the
+  // surface scales up from --modal-scale on open and dips back on close.
+  const [presentMode, setPresentMode] = useState<"pre" | "open" | "closing">("pre");
+  const presentCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const PRESENT_CLOSE_MS = 150; // matches --modal-close-dur
+  const openPresent = () => {
+    if (presentCloseTimer.current) clearTimeout(presentCloseTimer.current);
+    setPresenting(true);
+    requestAnimationFrame(() => setPresentMode("open"));
+  };
+  const closePresent = () => {
+    setPresentMode("closing");
+    presentCloseTimer.current = setTimeout(() => {
+      setPresenting(false);
+      setPresentMode("pre");
+    }, PRESENT_CLOSE_MS);
+  };
 
   const range = data.meta.range; // server-driven
 
@@ -751,7 +768,7 @@ export function ReportsStudio({
     if (!presenting) return;
     const order = REPORT_TYPES.map((t) => t.value);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPresenting(false);
+      if (e.key === "Escape") closePresent();
       else if (e.key === "ArrowRight") setType((t) => order[(order.indexOf(t) + 1) % order.length]);
       else if (e.key === "ArrowLeft") setType((t) => order[(order.indexOf(t) - 1 + order.length) % order.length]);
     };
@@ -789,7 +806,7 @@ export function ReportsStudio({
             </button>
             <button
               type="button"
-              onClick={() => setPresenting(true)}
+              onClick={openPresent}
               className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
               style={{ borderColor: "var(--accent)", background: "var(--accent)" }}
             >
@@ -837,7 +854,7 @@ export function ReportsStudio({
         <div className="report-no-print fixed inset-0 z-[100] flex items-center justify-center" style={{ background: "rgba(3,5,9,0.97)" }}>
           <button
             type="button"
-            onClick={() => setPresenting(false)}
+            onClick={closePresent}
             aria-label="Exit presentation"
             className="absolute right-5 top-5 rounded-lg border border-border bg-surface/80 p-2 text-muted transition-colors hover:text-foreground"
           >
@@ -865,7 +882,10 @@ export function ReportsStudio({
           >
             <ChevronRight size={22} />
           </button>
-          <div style={{ width: CANVAS_W * presScale, height: CANVAS_H * presScale }}>
+          <div
+            className={`t-modal${presentMode === "open" ? " is-open" : presentMode === "closing" ? " is-closing" : ""}`}
+            style={{ width: CANVAS_W * presScale, height: CANVAS_H * presScale }}
+          >
             <div
               className="overflow-hidden rounded-2xl border"
               style={{

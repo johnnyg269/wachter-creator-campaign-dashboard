@@ -28,6 +28,8 @@ import { formatCompact, formatDate, formatDelta, formatPct, truncate } from "@/l
 import { Card } from "@/components/ui/card";
 import { DeltaTag } from "@/components/ui/delta";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ClearableInput } from "@/components/ui/clearable-input";
+import { IconSwap } from "@/components/ui/icon-swap";
 import { MetricValue } from "@/components/ui/metric-value";
 import { PLATFORM_COLORS, PLATFORM_HEX, PlatformBadge } from "@/components/ui/platform";
 import { StatusPill } from "@/components/ui/status";
@@ -549,10 +551,20 @@ export function VideosExplorer({
       {/* Filters */}
       <Card className="flex flex-col gap-3 px-4 py-3.5">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] flex-1">
-            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-strong" />
-            <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title or caption…" aria-label="Search videos" className={clsx(inputCls, "w-full pl-8")} />
-          </div>
+          <ClearableInput
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onClear={() => setSearch("")}
+            placeholder="Search title or caption…"
+            aria-label="Search videos"
+            wrapperClassName="min-w-[200px] flex-1"
+            inputClassName={clsx(inputCls, "w-full pl-8 pr-8")}
+            mirrorClassName="pl-8 pr-8 text-xs text-foreground"
+            leftIcon={
+              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 z-[3] -translate-y-1/2 text-muted-strong" />
+            }
+          />
           <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} aria-label="Sort videos by" className={inputCls}>
             {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
               <option key={k} value={k}>Sort: {SORT_LABELS[k]}</option>
@@ -565,7 +577,11 @@ export function VideosExplorer({
             title={sortDir === "desc" ? "Descending" : "Ascending"}
             className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-muted transition-colors hover:text-foreground"
           >
-            {sortDir === "desc" ? <ArrowDown size={13} /> : <ArrowUp size={13} />}
+            <IconSwap
+              state={sortDir === "desc" ? "a" : "b"}
+              a={<ArrowDown size={13} />}
+              b={<ArrowUp size={13} />}
+            />
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

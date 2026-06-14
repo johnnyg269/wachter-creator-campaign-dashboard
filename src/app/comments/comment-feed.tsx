@@ -21,6 +21,7 @@ import {
 import type { Comment, EpisodeGroup, Platform, Sentiment, Video } from "@/lib/types";
 import { PLATFORMS, PLATFORM_LABELS } from "@/lib/types";
 import { Card } from "@/components/ui/card";
+import { ClearableInput } from "@/components/ui/clearable-input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PLATFORM_COLORS, PlatformBadge, PlatformDot } from "@/components/ui/platform";
 import { TimeAgo } from "@/components/ui/time-ago";
@@ -302,24 +303,30 @@ export function CommentFeed({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-48 flex-1">
-              <Search
-                size={13}
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-strong"
-                aria-hidden
-              />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  resetPage();
-                }}
-                placeholder="Search comments, authors, tags…"
-                aria-label="Search comments"
-                className="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs text-foreground outline-none transition-colors placeholder:text-muted-strong focus:border-border-strong"
-              />
-            </div>
+            <ClearableInput
+              type="search"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                resetPage();
+              }}
+              onClear={() => {
+                setSearch("");
+                resetPage();
+              }}
+              placeholder="Search comments, authors, tags…"
+              aria-label="Search comments"
+              wrapperClassName="min-w-48 flex-1"
+              inputClassName="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-8 text-xs text-foreground outline-none transition-colors placeholder:text-muted-strong focus:border-border-strong"
+              mirrorClassName="pl-8 pr-8 text-xs text-foreground"
+              leftIcon={
+                <Search
+                  size={13}
+                  className="pointer-events-none absolute left-2.5 top-1/2 z-[3] -translate-y-1/2 text-muted-strong"
+                  aria-hidden
+                />
+              }
+            />
             {videos.length > 0 && (
               <select
                 value={videoId}

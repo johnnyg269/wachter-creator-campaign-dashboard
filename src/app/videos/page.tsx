@@ -51,6 +51,7 @@ export default async function VideosPage({
   return (
     <div>
       <PageHeader
+        reveal
         title="Videos"
         subtitle={subtitle}
         actions={

@@ -77,6 +77,7 @@ export default async function EpisodesPage() {
     <div>
       <DataNotice health={health} />
       <PageHeader
+        reveal
         title="Episodes"
         subtitle="Cross-platform performance by content concept"
         actions={

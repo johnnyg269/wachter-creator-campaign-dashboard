@@ -19,6 +19,8 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import { IconSwap } from "@/components/ui/icon-swap";
+import { NotificationBadge } from "@/components/ui/notification-badge";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -30,12 +32,13 @@ const NAV = [
   { href: "/reports", label: "Reports", icon: FileText },
 ] as const;
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+function NavLinks({ onNavigate, alertCount = 0 }: { onNavigate?: () => void; alertCount?: number }) {
   const pathname = usePathname();
   return (
     <nav className="flex flex-col gap-1">
       {NAV.map(({ href, label, icon: Icon }) => {
         const active = pathname === href;
+        const showBadge = href === "/alerts" && alertCount > 0;
         return (
           <Link
             key={href}
@@ -55,8 +58,15 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
                 className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent"
               />
             )}
-            <Icon size={16} className={active ? "text-accent" : "text-muted-strong"} />
+            {/* Bell carries the notification badge (real open-alert count). */}
+            <span className="relative inline-flex">
+              <Icon size={16} className={active ? "text-accent" : "text-muted-strong"} />
+              {href === "/alerts" && (
+                <NotificationBadge count={alertCount} srLabel={`${alertCount} open alert${alertCount === 1 ? "" : "s"}`} />
+              )}
+            </span>
             {label}
+            {showBadge && <span className="sr-only"> ({alertCount} open)</span>}
           </Link>
         );
       })}
@@ -110,7 +120,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
 // per the brief). origin "top-right": the menu grows from the hamburger.
 const DROPDOWN_CLOSE_MS = 150; // matches --dropdown-close-dur in globals.css
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, alertCount = 0 }: { children: React.ReactNode; alertCount?: number }) {
   // render = in the DOM; navState drives the .t-dropdown open/closing classes.
   const [render, setRender] = useState(false);
   const [navState, setNavState] = useState<"pre" | "open" | "closing">("pre");
@@ -137,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-56 shrink-0 flex-col gap-6 border-r border-border bg-surface/60 px-3 py-5 sticky top-0 h-screen">
         <Brand />
-        <NavLinks />
+        <NavLinks alertCount={alertCount} />
         <div className="mt-auto px-3">
           {/* Deliberately quiet — leadership viewers shouldn't be drawn here */}
           <Link
@@ -160,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           aria-expanded={open}
           aria-controls="mobile-nav-menu"
         >
-          {open ? <X size={18} /> : <Menu size={18} />}
+          <IconSwap state={open ? "b" : "a"} a={<Menu size={18} />} b={<X size={18} />} />
         </button>
       </div>
       {render && (
@@ -173,7 +183,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             navState === "closing" && "is-closing",
           )}
         >
-          <NavLinks onNavigate={closeMenu} />
+          <NavLinks onNavigate={closeMenu} alertCount={alertCount} />
           <Link
             href="/admin"
             onClick={closeMenu}

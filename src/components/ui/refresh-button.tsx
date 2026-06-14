@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import clsx from "clsx";
 import { RefreshCw, Zap } from "lucide-react";
+import { SuccessCheck } from "@/components/ui/success-check";
 
 export function RefreshButton({
   className,
@@ -24,6 +25,8 @@ export function RefreshButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Success-check confirmation detail — shown only on a genuine success result.
+  const [succeeded, setSucceeded] = useState(false);
 
   async function refresh() {
     if (force) {
@@ -34,6 +37,7 @@ export function RefreshButton({
     }
     setBusy(true);
     setMessage(null);
+    setSucceeded(false);
     try {
       const res = await fetch("/api/refresh", {
         method: "POST",
@@ -53,6 +57,7 @@ export function RefreshButton({
       }
       if (data?.ok && data.report) {
         const { status, errors, skipReason } = data.report;
+        setSucceeded(status === "success");
         setMessage(
           status === "skipped"
             ? (skipReason ?? "Refresh skipped")
@@ -78,15 +83,19 @@ export function RefreshButton({
       setTimeout(() => router.refresh(), 90_000);
     } finally {
       setBusy(false);
-      setTimeout(() => setMessage(null), 20_000);
+      setTimeout(() => {
+        setMessage(null);
+        setSucceeded(false);
+      }, 20_000);
     }
   }
 
   return (
     <div className={clsx("flex items-center gap-2", className)}>
       {message && (
-        <span className="max-w-64 truncate text-[11px] text-muted" title={message}>
-          {message}
+        <span className="inline-flex max-w-64 items-center gap-1 text-[11px] text-muted" title={message}>
+          {succeeded && <SuccessCheck show size={13} />}
+          <span className="truncate">{message}</span>
         </span>
       )}
       <button
