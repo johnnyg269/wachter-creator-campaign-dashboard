@@ -14,6 +14,7 @@ import {
   BarChart3,
   Layers,
   Bell,
+  FileText,
   Settings,
   Menu,
   X,
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/platforms", label: "Platforms", icon: BarChart3 },
   { href: "/episodes", label: "Episodes", icon: Layers },
   { href: "/alerts", label: "Alerts", icon: Bell },
+  { href: "/reports", label: "Reports", icon: FileText },
 ] as const;
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
