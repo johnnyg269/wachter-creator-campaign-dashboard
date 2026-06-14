@@ -5,7 +5,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import clsx from "clsx";
 import {
   LayoutDashboard,
@@ -104,8 +104,34 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
+// transitions.dev Menu dropdown (#05): open adds .is-open; close swaps to
+// .is-closing then unmounts after --dropdown-close-dur. Applied to the mobile
+// nav menu (a genuine custom menu — native <select>s elsewhere are left as-is
+// per the brief). origin "top-right": the menu grows from the hamburger.
+const DROPDOWN_CLOSE_MS = 150; // matches --dropdown-close-dur in globals.css
+
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+  // render = in the DOM; navState drives the .t-dropdown open/closing classes.
+  const [render, setRender] = useState(false);
+  const [navState, setNavState] = useState<"pre" | "open" | "closing">("pre");
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openMenu = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setRender(true);
+    // Mount in the pre-open rest state, then flip to .is-open next frame so the
+    // open transition actually runs (matches the transitions.dev orchestration).
+    requestAnimationFrame(() => setNavState("open"));
+  };
+  const closeMenu = () => {
+    setNavState("closing");
+    closeTimer.current = setTimeout(() => {
+      setRender(false);
+      setNavState("pre");
+    }, DROPDOWN_CLOSE_MS);
+  };
+  const open = render && navState !== "closing";
+
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
@@ -128,19 +154,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="lg:hidden fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-border bg-surface/95 backdrop-blur px-4 py-3">
         <Brand compact />
         <button
-          onClick={() => setOpen(!open)}
+          onClick={() => (open ? closeMenu() : openMenu())}
           className="rounded-lg p-2 text-muted hover:text-foreground"
           aria-label="Toggle navigation"
+          aria-expanded={open}
+          aria-controls="mobile-nav-menu"
         >
           {open ? <X size={18} /> : <Menu size={18} />}
         </button>
       </div>
-      {open && (
-        <div className="lg:hidden fixed inset-x-0 top-[57px] z-40 border-b border-border bg-surface p-3">
-          <NavLinks onNavigate={() => setOpen(false)} />
+      {render && (
+        <div
+          id="mobile-nav-menu"
+          data-origin="top-right"
+          className={clsx(
+            "t-dropdown lg:hidden fixed inset-x-0 top-[57px] z-40 border-b border-border bg-surface p-3",
+            navState === "open" && "is-open",
+            navState === "closing" && "is-closing",
+          )}
+        >
+          <NavLinks onNavigate={closeMenu} />
           <Link
             href="/admin"
-            onClick={() => setOpen(false)}
+            onClick={closeMenu}
             className="mt-2 flex items-center gap-2 px-3 py-2 text-xs text-muted-strong"
           >
             <Settings size={13} />

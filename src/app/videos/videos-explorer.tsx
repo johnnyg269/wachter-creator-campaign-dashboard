@@ -302,6 +302,13 @@ function DetailDrawer({ r, now, onClose }: { r: VideoRowData; now: number; onClo
   const title = v.title ?? v.caption ?? "Untitled video";
   const saves = r.latest?.saves ?? r.latest?.bookmarks ?? null;
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Panel reveal (transitions.dev #07): mount in the closed state, flip
+  // data-open next frame so the body rises + un-blurs + fades in on open.
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setRevealed(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // Dialog a11y: Escape closes, focus moves into the drawer on open and is
   // restored on close, and background scroll is locked while open.
@@ -324,7 +331,7 @@ function DetailDrawer({ r, now, onClose }: { r: VideoRowData; now: number; onClo
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Details for ${truncate(title, 60)}`}>
       <button type="button" aria-label="Close details" onClick={onClose} className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" />
-      <div className="section-enter relative h-full w-full max-w-md overflow-y-auto border-l border-border bg-surface-raised shadow-2xl">
+      <div className="t-resize section-enter relative h-full w-full max-w-md overflow-y-auto border-l border-border bg-surface-raised shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex items-start gap-3">
             <VideoThumb src={v.thumbnailUrl} platform={v.platform} alt={title} className="h-24 w-16 shrink-0 rounded-lg" />
@@ -341,7 +348,11 @@ function DetailDrawer({ r, now, onClose }: { r: VideoRowData; now: number; onClo
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-4">
+        <div
+          className="t-panel-slide space-y-4 px-5 py-4"
+          data-open={revealed}
+          style={{ "--panel-translate-y": "24px" } as React.CSSProperties}
+        >
           <div className="flex flex-wrap gap-1.5">
             <StatusBadges r={r} now={now} />
           </div>

@@ -51,30 +51,49 @@ export function VideoThumb({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const resolved = thumbSrc(src);
 
   if (!resolved || failed) {
     return <Fallback platform={platform} className={className} />;
   }
 
+  // Skeleton loader + reveal — transitions.dev pattern #14 (skills/14-skeleton-
+  // reveal.md): two stacked layers cross-fade with a matching cross-blur when
+  // real content arrives. The "data arrived" signal here is the image load.
+  // We keep this app's race-hardening: a ref check covers images that finished
+  // (or failed) before hydration, when onLoad/onError won't fire. No fake
+  // delay — the reveal is driven by the genuine load event. The .t-skel classes
+  // + reduced-motion guard live in globals.css verbatim.
   return (
-    <div className={clsx("relative shrink-0 overflow-hidden rounded-lg", className ?? "h-14 w-10")}>
-      {/* Skeleton sits BEHIND the image: visible until pixels paint over it.
-          No onLoad bookkeeping — immune to the cached-image/hydration race. */}
-      <div className="absolute inset-0 animate-pulse rounded-lg border border-border bg-surface-hover" aria-hidden />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={resolved}
-        alt={alt ?? "Video thumbnail"}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-        ref={(el) => {
-          // Catch failures that completed before hydration (onError won't refire).
-          if (el && el.complete && el.naturalWidth === 0) setFailed(true);
-        }}
-        className="relative h-full w-full rounded-lg border border-border object-cover"
-      />
+    <div
+      className={clsx(
+        "t-skel relative shrink-0 overflow-hidden rounded-lg",
+        loaded && "is-revealed",
+        className ?? "h-14 w-10",
+      )}
+    >
+      <div className="t-skel-skeleton is-pulsing" aria-hidden>
+        <div className="h-full w-full rounded-lg border border-border bg-surface-hover" />
+      </div>
+      <div className="t-skel-content">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={resolved}
+          alt={alt ?? "Video thumbnail"}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          ref={(el) => {
+            if (!el || !el.complete) return;
+            // Completed before hydration: onLoad/onError won't refire.
+            if (el.naturalWidth === 0) setFailed(true);
+            else setLoaded(true);
+          }}
+          className="h-full w-full rounded-lg border border-border object-cover"
+        />
+      </div>
     </div>
   );
 }

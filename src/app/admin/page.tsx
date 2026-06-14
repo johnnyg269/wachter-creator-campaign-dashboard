@@ -9,6 +9,8 @@ import { DataNotice } from "@/components/layout/data-notice";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { TimeAgo } from "@/components/ui/time-ago";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { Info } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
 import { LoginForm } from "./login-form";
 import { ApifySetup } from "./apify-setup";
@@ -37,12 +39,15 @@ function ReadinessRow({
   label,
   detail,
   warnOnly,
+  tip,
 }: {
   ok: boolean;
   label: string;
   detail: string;
   /** Render a soft warning instead of a hard red when not ok. */
   warnOnly?: boolean;
+  /** Optional diagnostic tooltip (transitions.dev tooltip pattern). */
+  tip?: string;
 }) {
   return (
     <div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5">
@@ -56,7 +61,14 @@ function ReadinessRow({
         }
       />
       <div className="min-w-0 text-xs">
-        <div className="font-medium">{label}</div>
+        <div className="flex items-center gap-1.5 font-medium">
+          {label}
+          {tip && (
+            <InfoTooltip label={tip} triggerLabel={`About: ${label}`} triggerClassName="text-muted-strong hover:text-foreground">
+              <Info size={12} />
+            </InfoTooltip>
+          )}
+        </div>
         <div className="mt-0.5 text-[11px] text-muted">{detail}</div>
       </div>
     </div>
@@ -164,6 +176,7 @@ export default async function AdminPage() {
                 warnOnly
                 label={`Data sources: ${dataSourcesReady ? "all platforms connected" : "needs attention"}`}
                 detail={dataSourcesDetail}
+                tip="TikTok / Instagram / Facebook use Apify. YouTube prefers the official Data API and only falls back to Apify when no API key is set."
               />
               <ReadinessRow
                 ok={Boolean(data.health.lastRun && data.health.lastRun.status !== "failed")}
@@ -225,6 +238,7 @@ export default async function AdminPage() {
                     ? "Metrics come from the official API — 0 Apify runs for YouTube"
                     : "No API key detected — using the Apify YouTube scraper"
                 }
+                tip="Set by YOUTUBE_API_KEY presence. The key is server-only and never shown here."
               />
               <ReadinessRow
                 ok={data.youtubeProvider.keyConfigured}

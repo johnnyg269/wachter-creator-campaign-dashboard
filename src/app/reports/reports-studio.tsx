@@ -12,6 +12,7 @@ import Image from "next/image";
 import { Printer, Projector, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCompact, formatDate, formatDateTime, formatNumber, formatPct } from "@/lib/format";
 import { PLATFORM_HEX } from "@/components/ui/platform";
+import { SlidingTabs } from "@/components/ui/sliding-tabs";
 import { PLATFORM_LABELS, type Platform } from "@/lib/types";
 import {
   DEFAULT_FILTERS,
@@ -65,23 +66,12 @@ function Segmented<T extends string>({
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-medium uppercase tracking-wide text-muted-strong">{label}</span>
-      <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5" role="group" aria-label={label}>
-        {options.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            aria-pressed={o.value === value}
-            className={
-              o.value === value
-                ? "rounded-md bg-[var(--accent-soft)] px-2.5 py-1 text-[11px] font-medium text-foreground"
-                : "rounded-md px-2.5 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
-            }
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
+      <SlidingTabs
+        ariaLabel={label}
+        value={value}
+        onChange={onChange}
+        items={options.map((o) => ({ value: o.value, label: o.label }))}
+      />
     </div>
   );
 }

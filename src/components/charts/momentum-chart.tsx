@@ -29,6 +29,7 @@ import type { Platform } from "@/lib/types";
 import { PLATFORM_LABELS, PLATFORMS } from "@/lib/types";
 import { formatCompact, formatDelta } from "@/lib/format";
 import { AnimatedText } from "@/components/ui/animated-text";
+import { SlidingTabs } from "@/components/ui/sliding-tabs";
 
 type Metric = "views" | "engagements" | "comments";
 type ChartMode = "total" | "velocity";
@@ -360,49 +361,38 @@ export function MomentumChart({
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
-            {(Object.keys(METRIC_META) as Metric[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMetric(m)}
-                aria-pressed={m === metric}
-                className={clsx(
-                  "rounded-full px-3 py-1 text-[11px] font-medium transition-all duration-200",
-                  m === metric
-                    ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
-                    : "text-muted hover:text-foreground",
-                )}
-              >
-                <span
-                  className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
-                  style={{ background: METRIC_META[m].color }}
-                />
-                {METRIC_META[m].label}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-0.5 rounded-full border border-border bg-background/60 p-1">
-            {(["total", "velocity"] as ChartMode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                aria-pressed={m === mode}
-                title={
-                  m === "total"
-                    ? "Cumulative totals over time"
-                    : "Growth per interval — is momentum accelerating?"
-                }
-                className={clsx(
-                  "rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-all duration-200",
-                  m === mode
-                    ? "bg-surface-hover text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_1px_3px_rgba(0,0,0,0.4)] ring-1 ring-border-strong"
-                    : "text-muted hover:text-foreground",
-                )}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+          <SlidingTabs
+            ariaLabel="Metric"
+            value={metric}
+            onChange={setMetric}
+            items={(Object.keys(METRIC_META) as Metric[]).map((m) => ({
+              value: m,
+              ariaLabel: METRIC_META[m].label,
+              label: (
+                <>
+                  <span
+                    className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                    style={{ background: METRIC_META[m].color }}
+                  />
+                  {METRIC_META[m].label}
+                </>
+              ),
+            }))}
+          />
+          <SlidingTabs
+            ariaLabel="Chart mode"
+            value={mode}
+            onChange={setMode}
+            tabClassName="capitalize"
+            items={(["total", "velocity"] as ChartMode[]).map((m) => ({
+              value: m,
+              label: m,
+              title:
+                m === "total"
+                  ? "Cumulative totals over time"
+                  : "Growth per interval — is momentum accelerating?",
+            }))}
+          />
         </div>
         {last && (
           <div className="flex items-baseline gap-1.5 text-xs text-muted">
