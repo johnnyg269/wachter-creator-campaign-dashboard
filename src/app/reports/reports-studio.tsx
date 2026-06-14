@@ -12,6 +12,7 @@ import Image from "next/image";
 import { Printer, Projector, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCompact, formatDate, formatDateTime, formatNumber, formatPct } from "@/lib/format";
 import { PLATFORM_HEX } from "@/components/ui/platform";
+import { Sparkline } from "@/components/charts/sparkline";
 import { SlidingTabs } from "@/components/ui/sliding-tabs";
 import { PLATFORM_LABELS, type Platform } from "@/lib/types";
 import {
@@ -252,69 +253,68 @@ function Kpi({ label, value, sub, highlight }: { label: string; value: string; s
   );
 }
 
-/** Lower-section highlight: a named pick with its metric (and platform dot). */
-function HighlightCard({
-  label,
-  video,
-  valueText,
-  fallback,
+/** Platform contribution — the dominant board visual: a stacked horizontal bar
+ *  + legend showing each platform's share of SELECTED-PERIOD GROWTH (who drove
+ *  the campaign). Falls back to share of total views when there is no confirmed
+ *  period growth yet. Real snapshot data only. */
+function PlatformContribution({
+  rolls,
+  rangeLabel,
 }: {
-  label: string;
-  video?: ReportVideo | null;
-  valueText?: string;
-  fallback?: string;
+  rolls: ReturnType<typeof rollupByPlatform>;
+  rangeLabel: string;
 }) {
-  return (
-    <div className="flex min-h-0 flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
-      {video ? (
-        <>
-          <div className="mt-2 flex items-center gap-2">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: PLATFORM_HEX[video.platform] }} />
-            <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-snug">{video.title}</span>
-          </div>
-          {valueText && <div className="tabular mt-auto pt-2 text-[18px] font-semibold">{valueText}</div>}
-        </>
-      ) : (
-        <div className="mt-2 text-[13px] text-muted">{fallback ?? "Not enough data yet"}</div>
-      )}
-    </div>
-  );
-}
+  const totalGrowth = sumReal(rolls.map((r) => r.totalGrowth)) ?? 0;
+  const totalViews = sumReal(rolls.map((r) => r.totalViews)) ?? 0;
+  const byGrowth = totalGrowth > 0;
+  const valueOf = (r: ReturnType<typeof rollupByPlatform>[number]) =>
+    byGrowth ? (r.totalGrowth ?? 0) : (r.totalViews ?? 0);
+  const total = byGrowth ? totalGrowth : totalViews;
+  const sorted = [...rolls].filter((r) => valueOf(r) > 0).sort((a, b) => valueOf(b) - valueOf(a));
 
-/** Platform contribution: one stacked horizontal bar of view share + legend. */
-function StackedShareBar({ rolls }: { rolls: ReturnType<typeof rollupByPlatform> }) {
-  const total = sumReal(rolls.map((r) => r.totalViews)) ?? 0;
-  const withViews = rolls.filter((r) => (r.totalViews ?? 0) > 0);
-  if (total <= 0 || withViews.length === 0) {
-    return <div className="mt-4 text-[14px] text-muted">No confirmed view data to break down yet.</div>;
-  }
-  const sorted = [...withViews].sort((a, b) => (b.totalViews ?? 0) - (a.totalViews ?? 0));
   return (
-    <div className="mt-4">
-      <div className="flex h-6 w-full overflow-hidden rounded-full" style={{ background: "var(--surface-hover)" }}>
-        {sorted.map((r) => (
-          <div
-            key={r.platform}
-            style={{ width: `${((r.totalViews ?? 0) / total) * 100}%`, background: PLATFORM_HEX[r.platform] }}
-            title={`${PLATFORM_LABELS[r.platform]} · ${formatPct((r.totalViews ?? 0) / total)}`}
-          />
-        ))}
+    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border px-7 py-6" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+      <div className="flex items-baseline justify-between">
+        <div className="text-[14px] font-semibold tracking-tight">
+          {byGrowth ? "Growth by platform" : "Platform contribution"}
+        </div>
+        <div className="text-[12px] text-muted">
+          {byGrowth ? `+${formatCompact(total)} views gained · ${rangeLabel}` : `${formatCompact(total)} total views`}
+        </div>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5">
-        {sorted.map((r) => (
-          <div key={r.platform} className="flex items-center justify-between gap-2">
-            <span className="flex min-w-0 items-center gap-2 text-[13px] font-medium">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: PLATFORM_HEX[r.platform] }} />
-              <span className="truncate">{PLATFORM_LABELS[r.platform]}</span>
-            </span>
-            <span className="tabular shrink-0 text-[13px]">
-              <span className="font-semibold">{formatPct((r.totalViews ?? 0) / total)}</span>
-              <span className="text-muted-strong"> · {formatCompact(r.totalViews)}</span>
-            </span>
+      {total <= 0 || sorted.length === 0 ? (
+        <div className="mt-5 flex flex-1 items-center text-[14px] text-muted">
+          No confirmed {byGrowth ? "growth" : "view"} data to break down yet.
+        </div>
+      ) : (
+        <>
+          <div className="mt-5 flex h-9 w-full overflow-hidden rounded-full" style={{ background: "var(--surface-hover)" }}>
+            {sorted.map((r) => (
+              <div
+                key={r.platform}
+                style={{ width: `${(valueOf(r) / total) * 100}%`, background: PLATFORM_HEX[r.platform] }}
+                title={`${PLATFORM_LABELS[r.platform]} · ${formatPct(valueOf(r) / total)}`}
+              />
+            ))}
           </div>
-        ))}
-      </div>
+          <div className="mt-6 grid flex-1 grid-cols-2 content-center gap-x-10 gap-y-4">
+            {sorted.map((r) => (
+              <div key={r.platform} className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2.5 text-[15px] font-medium">
+                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: PLATFORM_HEX[r.platform] }} />
+                  <span className="truncate">{PLATFORM_LABELS[r.platform]}</span>
+                </span>
+                <span className="tabular shrink-0 text-right text-[15px]">
+                  <span className="font-semibold">
+                    {byGrowth ? `+${formatCompact(r.totalGrowth)}` : formatCompact(r.totalViews)}
+                  </span>
+                  <span className="ml-2 text-muted-strong">{formatPct(valueOf(r) / total)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -324,24 +324,24 @@ function StackedShareBar({ rolls }: { rolls: ReturnType<typeof rollupByPlatform>
 function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
   const vids = filterVideos(data.videos, f);
   const roll = rollupVideos(vids);
-  const comments = rollupComments(filterComments(data.comments, f));
   const platRolls = rollupByPlatform(vids);
   const concepts = rollupConcepts(vids, data.concepts);
   const topPlatform = [...platRolls].sort((a, b) => (b.totalViews ?? -1) - (a.totalViews ?? -1))[0];
   const totalPlatViews = sumReal(platRolls.map((r) => r.totalViews)) ?? 0;
-  const topGrowthVideo = rankVideos(vids, "growth")[0] ?? null;
-  const topOverallVideo = rankVideos(vids, "views")[0] ?? null;
   const bestConcept = [...concepts].sort((a, b) => (b.totalViews ?? -1) - (a.totalViews ?? -1))[0] ?? null;
-  const responseVideo = [...vids].filter((v) => v.audienceNeedsResponse > 0).sort((a, b) => b.audienceNeedsResponse - a.audienceNeedsResponse)[0] ?? null;
+  const themeTopPlatform = bestConcept ? bestPlatformForConcept(vids, bestConcept.id) : null;
+  const gained = roll.totalGrowth;
+  // Campaign-momentum sparkline: real confirmed-view readings only (no fakes).
+  const trendPoints = data.overallTrend.map((p) => p.views).filter((v): v is number => v !== null);
 
   return (
-    <div className="flex h-full flex-col gap-5">
-      {/* KPI strip (7) */}
+    <div className="flex h-full flex-col gap-4">
+      {/* KPI strip (7) — board language */}
       <div className="grid grid-cols-7 gap-2.5">
-        <Kpi label="Total views" value={formatCompact(roll.totalViews)} highlight={f.metric === "views"} />
-        <Kpi label="Views gained" value={roll.totalGrowth === null ? "—" : `+${formatCompact(roll.totalGrowth)}`} sub={data.meta.rangeLabel} highlight={f.metric === "growth"} />
+        <Kpi label="Total reach" value={formatCompact(roll.totalViews)} sub="views" highlight={f.metric === "views"} />
+        <Kpi label="Views gained" value={gained === null ? "—" : `+${formatCompact(gained)}`} sub={data.meta.rangeLabel} highlight={f.metric === "growth"} />
         <Kpi label="Engagements" value={formatCompact(roll.totalEngagements)} highlight={f.metric === "engagement"} />
-        <Kpi label="Eng. rate" value={formatPct(roll.engagementRate)} />
+        <Kpi label="Engagement rate" value={formatPct(roll.engagementRate)} />
         <Kpi label="Comments" value={formatCompact(roll.totalComments)} highlight={f.metric === "comments"} />
         <Kpi
           label="Top platform"
@@ -351,42 +351,55 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
         <Kpi label="Videos tracked" value={formatNumber(roll.count)} />
       </div>
 
-      {/* Main visual: platform contribution */}
-      <div className="rounded-2xl border px-7 py-5" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-        <div className="flex items-baseline justify-between">
-          <div className="text-[13px] font-semibold uppercase tracking-wide text-muted">Platform contribution · share of views</div>
-          <div className="text-[12px] text-muted">{formatCompact(roll.totalViews)} total views</div>
-        </div>
-        <StackedShareBar rolls={platRolls} />
-      </div>
+      {/* Dominant visual: platform contribution by selected-period growth */}
+      <PlatformContribution rolls={platRolls} rangeLabel={data.meta.rangeLabel} />
 
-      {/* Lower section: 4 highlights */}
-      <div className="grid min-h-0 flex-1 grid-cols-4 gap-4">
-        <HighlightCard label="Top growth video" video={topGrowthVideo} valueText={topGrowthVideo ? `+${fmtMetric(topGrowthVideo.periodGrowth, "growth")} views` : undefined} fallback="No range growth yet" />
-        <HighlightCard label="Top overall video" video={topOverallVideo} valueText={topOverallVideo ? `${fmtMetric(topOverallVideo.views, "views")} views` : undefined} />
-        <div className="flex min-h-0 flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Winning concept</div>
+      {/* Campaign-level row: momentum · engagement quality · leading theme */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* Campaign momentum */}
+        <div className="flex flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          <div className="flex items-baseline justify-between">
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-muted">Campaign momentum</div>
+            <div className="text-[11px] text-muted-strong">{data.meta.rangeLabel}</div>
+          </div>
+          <div className="mt-3 flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <div
+                className="tabular text-[26px] font-semibold leading-none"
+                style={{ color: gained !== null && gained > 0 ? "var(--positive)" : "var(--foreground)" }}
+              >
+                {gained === null ? "—" : `${gained > 0 ? "↑ +" : ""}${formatCompact(gained)}`}
+              </div>
+              <div className="mt-1.5 text-[11px] text-muted">views gained · {formatCompact(roll.totalViews)} total</div>
+            </div>
+            <Sparkline points={trendPoints} color="#3b82f6" width={116} height={40} ariaLabel="Campaign view trend" />
+          </div>
+        </div>
+
+        {/* Engagement quality */}
+        <div className="flex flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          <div className="text-[12px] font-semibold uppercase tracking-wide text-muted">Engagement quality</div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <Stat label="Engagements" value={formatCompact(roll.totalEngagements)} />
+            <Stat label="Eng. rate" value={formatPct(roll.engagementRate)} />
+            <Stat label="Comments" value={formatCompact(roll.totalComments)} />
+          </div>
+        </div>
+
+        {/* Leading content theme (secondary supporting insight) */}
+        <div className="flex flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          <div className="text-[12px] font-semibold uppercase tracking-wide text-muted">Leading theme</div>
           {bestConcept ? (
             <>
-              <div className="mt-2 truncate text-[15px] font-medium">{bestConcept.name}</div>
-              <div className="tabular mt-auto pt-2 text-[13px] text-muted-strong">
-                {fmtMetric(bestConcept.totalViews, "views")} views · {formatNumber(bestConcept.count)} videos
+              <div className="mt-2 truncate text-[16px] font-semibold">{bestConcept.name}</div>
+              <div className="tabular mt-auto pt-2 text-[12px] text-muted-strong">
+                {formatCompact(bestConcept.totalViews)} views · {formatNumber(bestConcept.count)} videos
+                {themeTopPlatform ? ` · ${PLATFORM_LABELS[themeTopPlatform].split(" ")[0]}` : ""}
               </div>
             </>
           ) : (
             <div className="mt-2 text-[13px] text-muted">No concept data yet</div>
           )}
-        </div>
-        <div className="flex min-h-0 flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Audience signal</div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="tabular text-[24px] font-semibold leading-none" style={{ color: "var(--warning)" }}>{formatNumber(comments.needsResponse)}</span>
-            <span className="text-[12px] text-muted">need a response</span>
-          </div>
-          <div className="mt-auto pt-2 text-[12px] text-muted-strong">
-            {formatNumber(comments.total)} comments · {formatNumber(comments.recruiting)} recruiting · {formatNumber(comments.wachter)} Wachter
-            {responseVideo ? ` · top: ${responseVideo.title.slice(0, 28)}` : ""}
-          </div>
         </div>
       </div>
     </div>

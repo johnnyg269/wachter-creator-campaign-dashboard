@@ -271,15 +271,64 @@ describe("Reports page structure & safety (source-level)", () => {
     expect(studio).toContain("Campaign Report");
     expect(studio).toContain("Last refreshed");
   });
-  it("renders the full 7-KPI executive row", () => {
-    for (const kpi of ["Total views", "Views gained", "Engagements", "Eng. rate", "Comments", "Top platform", "Videos tracked"]) {
+  it("renders the full 7-KPI executive row (board labels)", () => {
+    for (const kpi of ["Total reach", "Views gained", "Engagements", "Engagement rate", "Comments", "Top platform", "Videos tracked"]) {
       expect(studio).toContain(kpi);
     }
   });
-  it("shows platform contribution share, winning concept, and provenance footer", () => {
+  it("keeps platform contribution + provenance footer", () => {
     expect(studio).toContain("Platform contribution");
-    expect(studio).toContain("Winning concept");
-    expect(studio).toContain("Top video");
     expect(studio).toContain("Data from public platform metrics");
+  });
+});
+
+// ── Executive Summary: board-ready refinement (Phase 6 / Reports v3) ──────────
+
+describe("Executive Summary is board-level, not operational", () => {
+  const studio = read("src/app/reports/reports-studio.tsx");
+
+  it("drops the individual-video + audience-triage cards from the default report", () => {
+    // No "need a response" anywhere in the report studio (it lived only in the
+    // old Executive Summary audience card).
+    expect(studio).not.toContain("need a response");
+    // The old per-video Executive cards are gone.
+    expect(studio).not.toContain("Top growth video");
+    expect(studio).not.toContain("Top overall video");
+  });
+
+  it("replaces them with campaign-level visuals", () => {
+    expect(studio).toContain("PlatformContribution");
+    expect(studio).toContain("Growth by platform"); // share of selected-period growth
+    expect(studio).toContain("Campaign momentum");
+    expect(studio).toContain("Engagement quality");
+    expect(studio).toContain("Leading theme");
+  });
+
+  it("platform contribution uses real selected-period growth (falls back to views)", () => {
+    expect(studio).toContain("rolls.map((r) => r.totalGrowth)");
+    expect(studio).toContain("const byGrowth = totalGrowth > 0;");
+  });
+
+  it("comments remain a plain metric (KPI + engagement quality), not triage", () => {
+    expect(studio).toContain('label="Comments"');
+    // Engagement-quality comments stat.
+    expect(studio).toMatch(/Comments"\s+value=\{formatCompact\(roll\.totalComments\)\}/);
+  });
+
+  it("campaign momentum uses a real-points sparkline (no fakes)", () => {
+    expect(studio).toContain("data.overallTrend.map((p) => p.views).filter");
+    expect(studio).toContain("<Sparkline");
+  });
+
+  it("operational labels are not used in the report", () => {
+    for (const banned of ["Response opportunities", "Comment hot spots", "Needs response", "recruiting comments"]) {
+      expect(studio).not.toContain(banned);
+    }
+  });
+
+  it("Audience Signals report type still surfaces response opportunities", () => {
+    expect(studio).toContain("Response hot spots");
+    expect(studio).toContain("Need response");
+    expect(studio).toContain("Recruiting interest");
   });
 });
