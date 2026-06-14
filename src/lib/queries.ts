@@ -884,6 +884,8 @@ export interface AdminPageData {
   completeness: Record<string, Completeness>;
   /** Recent collection attempts (the provider attempt log). */
   attempts: CollectionAttempt[];
+  /** YouTube provider health — API vs Apify fallback (never the key value). */
+  youtubeProvider: YouTubeProviderStatus;
   /** Per-episode rollups for the admin Episodes manager. */
   episodeRollups: Array<{
     id: string;
@@ -907,11 +909,43 @@ export interface AdminPageData {
   };
 }
 
+export interface YouTubeProviderStatus {
+  /** Which provider serves YouTube right now. */
+  mode: "youtube_api" | "apify_fallback";
+  /** True when YOUTUBE_API_KEY is set (presence only — value never exposed). */
+  keyConfigured: boolean;
+  lastApiSuccessAt: string | null;
+  lastApiFailureAt: string | null;
+  lastApiError: string | null;
+  /** Videos returned by the most recent successful YouTube API sweep. */
+  videosViaApiLastRun: number;
+  /** True when the Apify YouTube scraper ran recently (fallback path used). */
+  apifyFallbackUsedRecently: boolean;
+}
+
 export async function getAdminPageData(): Promise<AdminPageData> {
   const store = getStore();
   const data = await loadCampaignData(true);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
   const health = await getHealth();
+  const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
+    b.capturedAt.localeCompare(a.capturedAt),
+  );
+  const ytApi = allAttempts.filter((a) => a.platform === "youtube" && a.provider === "youtube_api");
+  const ytApiSuccess = ytApi.find((a) => a.success) ?? null;
+  const ytApiFailure = ytApi.find((a) => !a.success) ?? null;
+  const ytHealth = health.platforms.find((p) => p.platform === "youtube");
+  const youtubeProvider: YouTubeProviderStatus = {
+    mode: ytHealth?.providerType === "youtube_api" ? "youtube_api" : "apify_fallback",
+    keyConfigured: getYouTubeApiKey() !== null,
+    lastApiSuccessAt: ytApiSuccess?.capturedAt ?? null,
+    lastApiFailureAt: ytApiFailure?.capturedAt ?? null,
+    lastApiError: ytApiFailure?.error ?? null,
+    videosViaApiLastRun: ytApiSuccess?.itemCount ?? 0,
+    apifyFallbackUsedRecently: allAttempts.some(
+      (a) => a.platform === "youtube" && a.provider === "apify",
+    ),
+  };
   const actorIds = { tiktok: null, instagram: null, facebook: null, youtube: null } as Record<
     Platform,
     string | null
@@ -964,7 +998,8 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     tokenStatus: await checkToken(),
     overrides: await store.listOverrides(30),
     completeness,
-    attempts: await store.listCollectionAttempts(40),
+    attempts: allAttempts.slice(0, 40),
+    youtubeProvider,
     readiness: {
       databaseConnected: health.store.kind === "postgres",
       cronSecretSet: getCronSecret() !== null,

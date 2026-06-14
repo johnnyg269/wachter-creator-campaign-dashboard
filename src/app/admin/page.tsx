@@ -22,6 +22,7 @@ export const dynamic = "force-dynamic";
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
+  { id: "youtube", label: "YouTube Provider" },
   { id: "episodes", label: "Episodes" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
@@ -184,6 +185,63 @@ export default async function AdminPage() {
 
         <section id="automation">
           <RefreshHealthPanel runs={data.refreshRuns} />
+        </section>
+
+        <section id="youtube">
+          <Card>
+            <CardHeader
+              title="YouTube provider"
+              subtitle="Official YouTube Data API is preferred; the Apify scraper is fallback-only"
+            />
+            <CardBody className="grid gap-2.5 text-xs sm:grid-cols-2 xl:grid-cols-3">
+              <ReadinessRow
+                ok={data.youtubeProvider.mode === "youtube_api"}
+                warnOnly
+                label={`Active provider: ${
+                  data.youtubeProvider.mode === "youtube_api" ? "YouTube Data API" : "Apify (fallback)"
+                }`}
+                detail={
+                  data.youtubeProvider.mode === "youtube_api"
+                    ? "Metrics come from the official API — 0 Apify runs for YouTube"
+                    : "No API key detected — using the Apify YouTube scraper"
+                }
+              />
+              <ReadinessRow
+                ok={data.youtubeProvider.keyConfigured}
+                warnOnly
+                label={`API key: ${data.youtubeProvider.keyConfigured ? "configured" : "not set"}`}
+                detail="Presence only — the key value is never displayed or sent to the browser"
+              />
+              <ReadinessRow
+                ok={data.youtubeProvider.lastApiSuccessAt !== null}
+                warnOnly
+                label={`Last API success: ${
+                  data.youtubeProvider.lastApiSuccessAt
+                    ? formatDateTime(data.youtubeProvider.lastApiSuccessAt)
+                    : "none yet"
+                }`}
+                detail={`${data.youtubeProvider.videosViaApiLastRun} video(s) refreshed via API on the last sweep`}
+              />
+              <ReadinessRow
+                ok={data.youtubeProvider.lastApiFailureAt === null}
+                warnOnly
+                label={`Last API failure: ${
+                  data.youtubeProvider.lastApiFailureAt
+                    ? formatDateTime(data.youtubeProvider.lastApiFailureAt)
+                    : "none"
+                }`}
+                detail={data.youtubeProvider.lastApiError ?? "No recent YouTube API errors"}
+              />
+              <ReadinessRow
+                ok={!data.youtubeProvider.apifyFallbackUsedRecently}
+                warnOnly
+                label={`Apify fallback: ${
+                  data.youtubeProvider.apifyFallbackUsedRecently ? "used recently" : "not used"
+                }`}
+                detail="The Apify YouTube scraper runs only when the API is unavailable"
+              />
+            </CardBody>
+          </Card>
         </section>
 
         <section id="episodes">

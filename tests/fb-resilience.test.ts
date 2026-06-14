@@ -70,7 +70,7 @@ vi.mock("@/lib/providers/registry", () => {
 // Imported AFTER the mock so the registry seam is in place.
 import { runRefresh } from "@/lib/refresh";
 import { ensureSeedData } from "@/lib/seed";
-import { loadCampaignData } from "@/lib/queries";
+import { getDashboardData, loadCampaignData } from "@/lib/queries";
 import { getStore } from "@/lib/store";
 import { normalizeVideoItem } from "@/lib/apify/normalize";
 
@@ -205,6 +205,36 @@ describe("Facebook refresh resilience (integration, real pipeline)", () => {
     // Audit trail records the preservation.
     const run = (await store.listRefreshRuns(1))[0];
     expect(run.rawLog?.some((l) => l.includes("preserved") && l.includes("last-known-good"))).toBe(true);
+  });
+
+  it("public UI shows last-known-good Facebook data (live, not failed) after a partial cycle", async () => {
+    const oldSuccess = "2026-06-13T10:00:00.000Z";
+    // resolveProvider returns the persisted config in production; mirror that
+    // here so getHealth sees Facebook's prior success timestamp.
+    ctrl.fbConfig = makeProviderConfig({
+      platform: "facebook",
+      status: "live",
+      supportsMetrics: true,
+      lastSuccessfulRefreshAt: oldSuccess,
+    });
+    await seedTrackedReel({
+      lastRefreshedAt: "2026-06-13T11:30:00.000Z",
+      thumbnailUrl: "https://stored-thumb.jpg",
+      views: 5000,
+      configSuccessAt: oldSuccess,
+    });
+    ctrl.fbFetch = async () => fetchResult([]); // partial cycle (no usable records)
+    await runRefresh("script");
+
+    // The public dashboard data still surfaces Facebook as live last-known-good
+    // with a stale/delayed marker — never "failed".
+    const dash = await getDashboardData("7d");
+    const fbCap = dash.sourceCapabilities.find((c) => c.platform === "facebook")!;
+    expect(fbCap).toBeDefined();
+    expect(fbCap.live).toBe(true); // last-known-good shown publicly
+    expect(fbCap.freshness).not.toBe("failed"); // stale/partial, not a hard failure
+    const fbHealth = dash.health.platforms.find((p) => p.platform === "facebook")!;
+    expect(fbHealth.sourceStatus).toBe("live");
   });
 
   it("thrown cycle preserves videos that have succeeded before: partial, not failed", async () => {

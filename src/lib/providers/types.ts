@@ -68,10 +68,21 @@ export interface SocialPlatformProvider {
    * Batch fast-path used by the refresh pipeline: one provider call covers
    * discovery + metrics + comments for the whole platform. Implementations
    * that can't batch can omit this; the pipeline falls back to per-video calls.
+   *
+   * `opts.wantComments` is the cost lever: on a metrics-only refresh it is
+   * false, so providers must NOT request expensive comment add-ons (TikTok
+   * commentsPerPost / side dataset, YouTube commentThreads). Comment COUNTS
+   * still come back with the cheap metric item; only comment TEXT is gated.
    */
   fetchPlatform?(
     profile: PlatformProfile | null,
     videos: Video[],
     since: Date,
+    opts?: PlatformFetchOptions,
   ): Promise<PlatformFetchResult>;
+}
+
+export interface PlatformFetchOptions {
+  /** Pull full comment detail (text) this cycle. Default true for back-compat. */
+  wantComments?: boolean;
 }

@@ -382,16 +382,19 @@ async function refreshPlatform(
   const since = effectiveStartDate(campaign);
 
   // Cost policy shaping:
-  //  - light mode: hot videos only; YouTube's channel sweep IS its metrics
-  //    fetch, so YouTube sits light cycles out entirely.
+  //  - light mode: hot videos only via the direct-URL surface. YouTube's
+  //    channel sweep AND Facebook's profile-FEED sweep ARE their only
+  //    view-bearing metrics fetch (the direct reel page has no views on
+  //    either), so both sit light cycles out entirely.
   //  - discovery off: drop the profile sweep where the direct-URL surface can
-  //    cover metrics (everywhere except YouTube) — no new-post hunting.
+  //    cover metrics (TikTok/Instagram) — no new-post hunting. YouTube and
+  //    Facebook keep their sweep because it is the metrics source itself.
   let targetVideos = videos;
   let targetProfile: typeof profile | null = profile;
   if (mode.light) {
-    if (platform === "youtube") {
+    if (platform === "youtube" || platform === "facebook") {
       out.status = "skipped";
-      out.reason = "light refresh — channel sweep deferred to the next full refresh";
+      out.reason = `light refresh — ${platform === "youtube" ? "channel" : "feed"} sweep deferred to the next full refresh`;
       log.push(`${platform}: ${out.reason}`);
       return out;
     }
@@ -404,7 +407,7 @@ async function refreshPlatform(
       return out;
     }
     log.push(`${platform}: light refresh targeting ${targetVideos.length} hot video(s)`);
-  } else if (!mode.discovery && platform !== "youtube") {
+  } else if (!mode.discovery && platform !== "youtube" && platform !== "facebook") {
     targetProfile = null;
     log.push(`${platform}: discovery sweep skipped this cycle (not due)`);
   }
@@ -416,7 +419,12 @@ async function refreshPlatform(
       attempts: import("./providers/types").AttemptDraft[];
     };
     if (provider.fetchPlatform) {
-      fetched = await provider.fetchPlatform(targetProfile, targetVideos, since);
+      // wantComments is the cost lever: comment detail (text) is pulled only on
+      // the once-per-day comment cycle; metric-only refreshes skip the comment
+      // add-ons entirely. Comment COUNTS still arrive with the cheap metric item.
+      fetched = await provider.fetchPlatform(targetProfile, targetVideos, since, {
+        wantComments: mode.comments,
+      });
     } else {
       // Per-video fallback path for providers without a batch implementation.
       fetched = { videos: [], commentsByVideo: {}, attempts: [] };

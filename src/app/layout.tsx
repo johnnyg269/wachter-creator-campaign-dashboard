@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import "slot-text/style.css";
 import { AppShell } from "@/components/layout/app-shell";
@@ -44,6 +45,10 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col page-glow">
         <AppShell>{children}</AppShell>
+        {/* Vercel Web Analytics — privacy-friendly, no cookies. Renders a tiny
+            beacon script only in production; a no-op in dev. Enabled in the
+            Vercel dashboard; this component is what actually emits pageviews. */}
+        <Analytics />
       </body>
     </html>
   );

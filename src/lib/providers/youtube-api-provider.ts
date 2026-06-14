@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { parseProfileUrl, parseVideoUrl } from "../url-parse";
 import type {
+  PlatformFetchOptions,
   PlatformFetchResult,
   ProviderReadiness,
   SocialPlatformProvider,
@@ -196,7 +197,9 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
     profile: PlatformProfile | null,
     videos: Video[],
     since: Date,
+    opts: PlatformFetchOptions = {},
   ): Promise<PlatformFetchResult> {
+    const wantComments = opts.wantComments ?? true;
     const result: PlatformFetchResult = { videos: [], commentsByVideo: {}, attempts: [] };
     const ids = new Set<string>();
     for (const v of videos) {
@@ -236,23 +239,28 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
       });
       throw e;
     }
-    for (const v of result.videos) {
-      if (!v.externalVideoId) continue;
-      const tracked = videos.find((t) => t.externalVideoId === v.externalVideoId);
-      const fake: Video = tracked ?? {
-        id: "",
-        campaignId: "",
-        platform: "youtube",
-        profileId: null,
-        originalUrl: v.originalUrl ?? "",
-        externalVideoId: v.externalVideoId,
-        title: null, caption: null, thumbnailUrl: null, publishedAt: null,
-        firstTrackedAt: "", lastRefreshedAt: null, status: "active",
-        episodeGroupId: null, sourceStatus: "live", errorMessage: null,
-        hidden: false, isSeed: false, rawJson: null,
-      };
-      const comments = await this.getVideoComments(fake);
-      if (comments.length > 0) result.commentsByVideo[v.externalVideoId] = comments;
+    // Comment detail (commentThreads, 1 quota unit/video) only on a
+    // comment-detail cycle — metrics-only refreshes skip it. Comment COUNTS
+    // already arrive cheaply on each video via statistics.commentCount.
+    if (wantComments) {
+      for (const v of result.videos) {
+        if (!v.externalVideoId) continue;
+        const tracked = videos.find((t) => t.externalVideoId === v.externalVideoId);
+        const fake: Video = tracked ?? {
+          id: "",
+          campaignId: "",
+          platform: "youtube",
+          profileId: null,
+          originalUrl: v.originalUrl ?? "",
+          externalVideoId: v.externalVideoId,
+          title: null, caption: null, thumbnailUrl: null, publishedAt: null,
+          firstTrackedAt: "", lastRefreshedAt: null, status: "active",
+          episodeGroupId: null, sourceStatus: "live", errorMessage: null,
+          hidden: false, isSeed: false, rawJson: null,
+        };
+        const comments = await this.getVideoComments(fake);
+        if (comments.length > 0) result.commentsByVideo[v.externalVideoId] = comments;
+      }
     }
     return result;
   }

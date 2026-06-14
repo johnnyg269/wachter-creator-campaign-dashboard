@@ -19,6 +19,12 @@ export interface RefreshPolicyConfig {
   lightIntervalMin: number;
   discoveryIntervalMin: number;
   commentsIntervalMin: number;
+  /** Full comment-detail (text) pull cadence — once per day by default. */
+  commentDetailIntervalHours: number;
+  /** Local hour (0–23) the daily comment-detail pull is allowed at/after. */
+  commentDetailHour: number;
+  /** Timezone for the comment-detail day boundary + target hour. */
+  commentDetailTimezone: string;
   enableLight: boolean;
   enableDiscovery: boolean;
   enableComments: boolean;
@@ -54,13 +60,27 @@ function envHour(name: string, fallback: number): number {
 }
 
 export function getRefreshPolicyConfig(): RefreshPolicyConfig {
+  // Comments are secondary and expensive — pull full comment detail once per
+  // day, not every cycle. Views are primary and cheap (and free for YouTube
+  // via the Data API), so metrics refresh hourly with an optional 30-min hot
+  // tier; discovery (new-post hunting) drops to twice a day.
+  const commentDetailIntervalHours = envInt("COMMENT_DETAIL_REFRESH_INTERVAL_HOURS", 24);
   return {
     fullIntervalMin: envInt("REFRESH_FULL_INTERVAL_MINUTES", 60),
     lightIntervalMin: envInt("REFRESH_LIGHT_INTERVAL_MINUTES", 30),
-    discoveryIntervalMin: envInt("REFRESH_DISCOVERY_INTERVAL_MINUTES", 180),
-    commentsIntervalMin: envInt("REFRESH_COMMENTS_INTERVAL_MINUTES", 120),
-    // Light refresh defaults OFF: hourly fulls alone hit the $1–2/day target.
-    enableLight: envBool("ENABLE_LIGHT_REFRESH", false),
+    discoveryIntervalMin: envInt("REFRESH_DISCOVERY_INTERVAL_MINUTES", 720),
+    // Kept for the admin "comments next due" display; the real gate is the
+    // once-per-day comment-detail rule below.
+    commentsIntervalMin: envInt("REFRESH_COMMENTS_INTERVAL_MINUTES", commentDetailIntervalHours * 60),
+    commentDetailIntervalHours,
+    commentDetailHour: envHour("COMMENT_DETAIL_REFRESH_HOUR", 9),
+    commentDetailTimezone:
+      process.env.COMMENT_DETAIL_REFRESH_TIMEZONE ||
+      process.env.REFRESH_QUIET_HOURS_TIMEZONE ||
+      "America/New_York",
+    // Hot-video tier ON: views are now cheap enough to refresh hot videos every
+    // 30 min between hourly fulls. Budget cap still wins (checked first).
+    enableLight: envBool("ENABLE_LIGHT_REFRESH", true),
     enableDiscovery: envBool("ENABLE_DISCOVERY_REFRESH", true),
     enableComments: envBool("ENABLE_COMMENT_REFRESH", true),
     budgetTargetUsd: envFloat("APIFY_DAILY_BUDGET_TARGET_USD", 2),
@@ -155,6 +175,34 @@ export type ScheduledDecision =
   | { action: "skip"; kind: "quiet" | "budget" | "not_due"; reason: string };
 
 /**
+ * Full comment-detail (text) is pulled at most once per local day, at/after a
+ * target hour. Comment COUNTS still come back every metrics refresh via the
+ * cheap metric item — this only gates the expensive comment-text add-ons.
+ * Pure + tested; quiet hours and the budget cap are enforced separately (and
+ * before this) in decideScheduledRefresh.
+ */
+export function isCommentDetailDue(
+  recentRuns: RefreshRun[],
+  now: Date,
+  cfg: RefreshPolicyConfig,
+): boolean {
+  if (!cfg.enableComments) return false;
+  // Wait until the daily target hour (e.g. 9:00 AM ET).
+  if (localHour(now, cfg.commentDetailTimezone) < cfg.commentDetailHour) return false;
+  // At most once per local calendar day: if comment detail already ran today,
+  // it's not due again.
+  const lastAt = lastSuccessfulWhere(recentRuns, (m) => m.comments);
+  if (
+    lastAt &&
+    localDateKey(new Date(lastAt), cfg.commentDetailTimezone) ===
+      localDateKey(now, cfg.commentDetailTimezone)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Decide what a SCHEDULED (cron) ping is allowed to do right now.
  * `todaysActorRuns` = collection attempts recorded today (local budget day).
  */
@@ -187,13 +235,12 @@ export function decideScheduledRefresh(args: {
   const lastFullAt = lastSuccessfulWhere(args.recentRuns, (m) => !m.light);
   const lastAnyAt = lastSuccessfulWhere(args.recentRuns, () => true);
   const lastDiscoveryAt = lastSuccessfulWhere(args.recentRuns, (m) => m.discovery);
-  const lastCommentsAt = lastSuccessfulWhere(args.recentRuns, (m) => m.comments);
 
   if (minutesSince(lastFullAt, now) >= cfg.fullIntervalMin) {
     const discovery =
       cfg.enableDiscovery && minutesSince(lastDiscoveryAt, now) >= cfg.discoveryIntervalMin;
-    const comments =
-      cfg.enableComments && minutesSince(lastCommentsAt, now) >= cfg.commentsIntervalMin;
+    // Comment detail: once per day at/after the target hour (cost control).
+    const comments = isCommentDetailDue(args.recentRuns, now, cfg);
     return {
       action: "run",
       mode: { light: false, discovery, comments },

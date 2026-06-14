@@ -249,6 +249,19 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
                 : "mode tracking starts with the next refresh"}
             </span>
           </Stat>
+          <Stat label="Comment detail">
+            Once/day at {String(cfg.commentDetailHour).padStart(2, "0")}:00 {cfg.commentDetailTimezone}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              Full comment text pulled daily; metric-only refreshes skip comment add-ons. Counts
+              still update each refresh.
+            </span>
+          </Stat>
+          <Stat label="Metrics cadence">
+            Full every {cfg.fullIntervalMin}m{cfg.enableLight ? ` · hot every ${cfg.lightIntervalMin}m` : ""}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              discovery every {Math.round(cfg.discoveryIntervalMin / 60)}h · budget cap still wins
+            </span>
+          </Stat>
           <Stat label="Next due">
             full {formatDateTime(nextDue(lastFullAt, cfg.fullIntervalMin))}
             <span className="block text-[10px] font-normal text-muted-strong">

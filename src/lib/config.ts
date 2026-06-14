@@ -31,6 +31,17 @@ export function isMockMode(): boolean {
   return process.env.MOCK_DATA === "1" || process.env.MOCK_DATA === "true";
 }
 
+/**
+ * Instagram share-count add-on. The apify/instagram-reel-scraper fetches a
+ * share count only when `includeSharesCount` is set, which adds per-reel work.
+ * Stored data showed shares always null, so this is OFF by default (cost
+ * control) — set ENABLE_INSTAGRAM_SHARES=1 to re-enable if it proves useful.
+ */
+export function shouldIncludeInstagramShares(): boolean {
+  const v = process.env.ENABLE_INSTAGRAM_SHARES;
+  return v === "1" || v?.toLowerCase() === "true";
+}
+
 const ACTOR_ENV_KEYS: Record<Platform, string> = {
   tiktok: "APIFY_TIKTOK_ACTOR_ID",
   instagram: "APIFY_INSTAGRAM_ACTOR_ID",

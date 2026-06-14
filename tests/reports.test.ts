@@ -266,4 +266,20 @@ describe("Reports page structure & safety (source-level)", () => {
     expect(lib).toContain('metric: "views"');
     expect(lib).toContain('type: "executive"');
   });
+  it("renders the spec'd executive header (logo + Campaign Report + last refresh)", () => {
+    expect(studio).toContain("wachter-creator-logo");
+    expect(studio).toContain("Campaign Report");
+    expect(studio).toContain("Last refreshed");
+  });
+  it("renders the full 7-KPI executive row", () => {
+    for (const kpi of ["Total views", "Views gained", "Engagements", "Eng. rate", "Comments", "Top platform", "Videos tracked"]) {
+      expect(studio).toContain(kpi);
+    }
+  });
+  it("shows platform contribution share, winning concept, and provenance footer", () => {
+    expect(studio).toContain("Platform contribution");
+    expect(studio).toContain("Winning concept");
+    expect(studio).toContain("Top video");
+    expect(studio).toContain("Data from public platform metrics");
+  });
 });

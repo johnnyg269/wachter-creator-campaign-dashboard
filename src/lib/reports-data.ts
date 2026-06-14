@@ -83,6 +83,13 @@ export async function buildReportsData(range: TimeRange): Promise<ReportsData> {
     trendByPlatform[platform] = toTrend(dashboard.trendByPlatform[platform]);
   }
 
+  const lastSuccessfulRefreshAt =
+    platforms
+      .map((p) => p.lastSuccessfulRefreshAt)
+      .filter((t): t is string => Boolean(t))
+      .sort()
+      .reverse()[0] ?? null;
+
   return {
     meta: {
       // Stamped by the server render; not Date.now() in a component body.
@@ -92,6 +99,7 @@ export async function buildReportsData(range: TimeRange): Promise<ReportsData> {
       historyStart: dashboard.historyStart,
       dateFrom: dashboard.dateRange.from,
       dateTo: dashboard.dateRange.to,
+      lastSuccessfulRefreshAt,
       campaignName: dashboard.campaign.name,
       creatorName: dashboard.campaign.creatorName,
       company: dashboard.campaign.company,

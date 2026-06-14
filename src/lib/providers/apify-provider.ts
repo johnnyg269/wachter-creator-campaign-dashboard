@@ -2,7 +2,12 @@
 // One instance per platform; the actor ID comes from the runtime
 // ProviderConfig (admin-set) or the APIFY_<PLATFORM>_ACTOR_ID env var.
 
-import { getActorIdFromEnv, getApifyToken, getBackupActorIdFromEnv } from "../config";
+import {
+  getActorIdFromEnv,
+  getApifyToken,
+  getBackupActorIdFromEnv,
+  shouldIncludeInstagramShares,
+} from "../config";
 import { mergeNormalizedVideos, metricCompleteness, normalizeCommentItem } from "../apify/normalize";
 import type {
   NormalizedComment,
@@ -21,6 +26,7 @@ import {
 } from "../apify/normalize";
 import type {
   AttemptDraft,
+  PlatformFetchOptions,
   PlatformFetchResult,
   ProviderReadiness,
   SocialPlatformProvider,
@@ -92,14 +98,22 @@ export class ApifyProvider implements SocialPlatformProvider {
       sinceIso?: string;
       limit?: number;
       knownVideoUrls?: string[];
+      /** Request the comment add-on this run (cost lever). Default true. */
+      wantComments?: boolean;
+      /** Instagram: request the share-count add-on (cost lever). Default off. */
+      includeShares?: boolean;
     },
     opts: { actorId?: string; attemptKind?: string; attempts?: AttemptDraft[] } = {},
   ): Promise<Array<Record<string, unknown>>> {
     const actorId = opts.actorId ?? this.actorId();
     if (!actorId) throw new Error(`No Apify actor configured for ${this.platform}`);
+    const wantComments = ctx.wantComments ?? true;
     const candidates = buildInputCandidates(this.platform, actorId, kind, {
       ...ctx,
-      commentsPerPost: this.supportsComments ? 15 : undefined,
+      // Comment add-on (TikTok commentsPerPost) only when this cycle wants
+      // comment detail — metrics-only refreshes skip it to cut cost.
+      commentsPerPost: this.supportsComments && wantComments ? 15 : undefined,
+      includeShares: ctx.includeShares,
       // The admin input override applies to the primary actor only.
       override: opts.actorId ? undefined : (this.config?.inputOverride ?? undefined),
     });
@@ -190,9 +204,14 @@ export class ApifyProvider implements SocialPlatformProvider {
     profile: PlatformProfile | null,
     videos: Video[],
     since: Date,
+    opts: PlatformFetchOptions = {},
   ): Promise<PlatformFetchResult> {
     const result: PlatformFetchResult = { videos: [], commentsByVideo: {}, attempts: [] };
     let items: Array<Record<string, unknown>> = [];
+    // Cost levers for this cycle: comment detail only when asked; IG shares
+    // add-on only when explicitly enabled.
+    const wantComments = opts.wantComments ?? true;
+    const includeShares = this.platform === "instagram" && shouldIncludeInstagramShares();
 
     if (profile && this.supportsDiscovery) {
       // Ask the actor for a few days BEFORE the campaign start so seed videos
@@ -207,6 +226,8 @@ export class ApifyProvider implements SocialPlatformProvider {
             profileUrl: profile.profileUrl,
             sinceIso: margin.toISOString(),
             limit: 50,
+            wantComments,
+            includeShares,
             // Instagram: ride direct reel URLs along with discovery — the
             // reel-page surface is fresher than the profile feed (verified
             // live in Phase 3.3c) and costs no extra actor run.
@@ -263,10 +284,11 @@ export class ApifyProvider implements SocialPlatformProvider {
           ...(result.commentsByVideo[commentKey] ?? []),
           ...embedded,
         ];
-      } else if (typeof raw.commentsDatasetUrl === "string" && this.supportsComments) {
+      } else if (wantComments && typeof raw.commentsDatasetUrl === "string" && this.supportsComments) {
         // Some actors (clockworks TikTok) deliver comments in a side dataset.
         // The dataset is shared across all videos in the run, so filter items
         // back to this video via their linkage fields (videoWebUrl etc.).
+        // Only fetched on a comment-detail cycle (cost control).
         commentFetches.push(
           fetchCommentsDataset(raw.commentsDatasetUrl, n.externalVideoId, n.originalUrl).then(
             (comments) => {
@@ -292,13 +314,19 @@ export class ApifyProvider implements SocialPlatformProvider {
       const idx = entryIndex.get(v.externalVideoId ?? "") ?? entryIndex.get(v.originalUrl);
       return idx !== undefined && result.videos[idx].views === null;
     };
-    const missing = videos.filter((v) => !matchesTracked(v) || entryViewsNull(v));
+    // Facebook's reel-page surface never carries a view count, so chasing
+    // view-null FB videos with per-video runs is pure cost with no benefit —
+    // only follow up on FB videos missing ENTIRELY (to bootstrap metadata).
+    // Other platforms' direct reel page IS the fresher, view-bearing surface.
+    const missing = videos.filter((v) =>
+      this.platform === "facebook" ? !matchesTracked(v) : !matchesTracked(v) || entryViewsNull(v),
+    );
     // YouTube shorts actor is channel-only; skip URL follow-up there.
     if (missing.length > 0 && this.platform !== "youtube") {
       try {
         const extra = await this.runWithMeta(
           "videos",
-          { videoUrls: missing.map((v) => v.originalUrl) },
+          { videoUrls: missing.map((v) => v.originalUrl), wantComments, includeShares },
           { attempts: result.attempts },
         );
         extra.forEach(ingest);
@@ -321,7 +349,7 @@ export class ApifyProvider implements SocialPlatformProvider {
         try {
           const extra = await this.runWithMeta(
             "videos",
-            { videoUrls: gaps.map((v) => v.originalUrl) },
+            { videoUrls: gaps.map((v) => v.originalUrl), wantComments, includeShares },
             { actorId: backupId, attemptKind: "backup", attempts: result.attempts },
           );
           extra.forEach(ingest); // merge fills only the missing fields

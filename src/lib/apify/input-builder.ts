@@ -31,6 +31,8 @@ export interface InputContext {
   limit?: number;
   /** Comments per post (when the actor supports it). */
   commentsPerPost?: number;
+  /** Instagram: request the (extra-cost) share count add-on. Default off. */
+  includeShares?: boolean;
   /** Admin-provided full input override — used verbatim when present. */
   override?: unknown;
 }
@@ -67,7 +69,9 @@ const KNOWN_ACTORS: Record<
     const input: Record<string, unknown> = {
       username: targets,
       resultsLimit: kind === "videos" ? targets.length : (ctx.limit ?? 30),
-      includeSharesCount: true,
+      // Share-count add-on is opt-in (cost control) — stored data showed it
+      // always returned null, so it is off unless ENABLE_INSTAGRAM_SHARES=1.
+      ...(ctx.includeShares ? { includeSharesCount: true } : {}),
     };
     if (kind === "discover" && ctx.sinceIso) {
       input.onlyPostsNewerThan = isoDateOnly(ctx.sinceIso);

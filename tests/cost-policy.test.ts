@@ -10,6 +10,7 @@ import {
   decodeRunMode,
   encodeRunMode,
   getRefreshPolicyConfig,
+  isCommentDetailDue,
   isQuietHours,
   localHour,
   nextActiveTime,
@@ -25,8 +26,11 @@ const read = (p: string) => readFileSync(path.join(REPO_ROOT, p), "utf-8");
 const CFG: RefreshPolicyConfig = {
   fullIntervalMin: 60,
   lightIntervalMin: 30,
-  discoveryIntervalMin: 180,
-  commentsIntervalMin: 120,
+  discoveryIntervalMin: 720,
+  commentsIntervalMin: 1440,
+  commentDetailIntervalHours: 24,
+  commentDetailHour: 9,
+  commentDetailTimezone: "America/New_York",
   enableLight: false,
   enableDiscovery: true,
   enableComments: true,
@@ -171,30 +175,30 @@ describe("tiered cadence decisions", () => {
       expect(d.mode.comments).toBe(false);
     }
   });
-  it("discovery and comments are included only when due", () => {
-    // Last run 70m ago had discovery+comments — full is due again, but
-    // discovery (180m) and comments (120m) are NOT due yet.
+  it("discovery is included only when due (12h)", () => {
+    // Full due (90m > 60) but discovery NOT due (90m < 720). Comments are
+    // gated separately (once/day) and not asserted here — ACTIVE is 08:00 ET,
+    // before the 09:00 comment-detail hour.
     const d = decideScheduledRefresh({
       now: ACTIVE,
-      recentRuns: [run({ startedAt: minsBefore(ACTIVE, 70) })],
+      recentRuns: [run({ startedAt: minsBefore(ACTIVE, 90) })],
       todaysActorRuns: 10,
       cfg: CFG,
     });
     expect(d.action).toBe("run");
     if (d.action === "run") {
       expect(d.mode.discovery).toBe(false);
-      expect(d.mode.comments).toBe(false);
+      expect(d.mode.comments).toBe(false); // before 09:00 ET
     }
-    // 200 minutes later both are due.
+    // 13 hours later discovery is due again.
     const d2 = decideScheduledRefresh({
       now: ACTIVE,
-      recentRuns: [run({ startedAt: minsBefore(ACTIVE, 200) })],
+      recentRuns: [run({ startedAt: minsBefore(ACTIVE, 13 * 60) })],
       todaysActorRuns: 10,
       cfg: CFG,
     });
     if (d2.action === "run") {
       expect(d2.mode.discovery).toBe(true);
-      expect(d2.mode.comments).toBe(true);
     }
   });
   it("runs whose logs predate mode tracking count as full+discovery+comments", () => {
@@ -206,6 +210,53 @@ describe("tiered cadence decisions", () => {
       cfg: CFG,
     });
     expect(d.action).toBe("skip"); // full not due — legacy run counts
+  });
+});
+
+describe("comment detail: once per day, at/after the target hour", () => {
+  const EIGHT_AM = new Date("2026-06-12T12:00:00.000Z"); // 08:00 EDT
+  const NINE_AM = new Date("2026-06-12T13:00:00.000Z"); // 09:00 EDT
+  const commentRunToday = () => run({ startedAt: minsBefore(NINE_AM, 30) }); // comments:on, today
+  const metricsOnlyToday = () =>
+    run({
+      startedAt: minsBefore(NINE_AM, 30),
+      rawLog: [encodeRunMode({ light: false, discovery: false, comments: false })],
+    });
+
+  it("is not due before the target hour", () => {
+    expect(isCommentDetailDue([], EIGHT_AM, CFG)).toBe(false);
+  });
+  it("is due at/after the hour when no comment-detail run happened today", () => {
+    expect(isCommentDetailDue([], NINE_AM, CFG)).toBe(true);
+    // A metrics-only refresh today does NOT count as a comment-detail run.
+    expect(isCommentDetailDue([metricsOnlyToday()], NINE_AM, CFG)).toBe(true);
+  });
+  it("is not due again once comment detail already ran today", () => {
+    expect(isCommentDetailDue([commentRunToday()], NINE_AM, CFG)).toBe(false);
+  });
+  it("becomes due again the next local day", () => {
+    const yesterday = run({ startedAt: "2026-06-11T13:30:00.000Z" }); // comments:on, prior day
+    expect(isCommentDetailDue([yesterday], NINE_AM, CFG)).toBe(true);
+  });
+  it("respects the enableComments kill switch", () => {
+    expect(isCommentDetailDue([], NINE_AM, { ...CFG, enableComments: false })).toBe(false);
+  });
+  it("a full refresh at/after the hour includes comments when due", () => {
+    // Last refresh 90m ago (full due again) was metrics-only, so comment detail
+    // has not run today → this full refresh includes comments.
+    const d = decideScheduledRefresh({
+      now: NINE_AM,
+      recentRuns: [
+        run({
+          startedAt: minsBefore(NINE_AM, 90),
+          rawLog: [encodeRunMode({ light: false, discovery: false, comments: false })],
+        }),
+      ],
+      todaysActorRuns: 10,
+      cfg: CFG,
+    });
+    expect(d.action).toBe("run");
+    if (d.action === "run") expect(d.mode.comments).toBe(true);
   });
 });
 
@@ -301,9 +352,9 @@ describe("pipeline wiring (source-level)", () => {
   it("every run records its mode marker for cadence bookkeeping", () => {
     expect(refresh).toContain("log.unshift(encodeRunMode(mode))");
   });
-  it("light mode targets hot videos and defers the YouTube channel sweep", () => {
+  it("light mode targets hot videos and defers the YouTube/Facebook sweep", () => {
     expect(refresh).toContain("pickHotVideos");
-    expect(refresh).toContain("channel sweep deferred");
+    expect(refresh).toContain("sweep deferred to the next full refresh");
   });
   it("comments are ingested only when the mode allows", () => {
     expect(refresh).toContain("mode.comments");
@@ -321,8 +372,11 @@ describe("pipeline wiring (source-level)", () => {
   it("env knobs exist with safe defaults", () => {
     const cfg = getRefreshPolicyConfig();
     expect(cfg.fullIntervalMin).toBe(60);
-    expect(cfg.discoveryIntervalMin).toBe(180);
-    expect(cfg.commentsIntervalMin).toBe(120);
+    expect(cfg.discoveryIntervalMin).toBe(720); // twice a day
+    expect(cfg.commentsIntervalMin).toBe(1440); // once a day
+    expect(cfg.commentDetailIntervalHours).toBe(24);
+    expect(cfg.commentDetailHour).toBe(9);
+    expect(cfg.commentDetailTimezone).toBe("America/New_York");
     expect(cfg.quietTimezone).toBe("America/New_York");
     expect(cfg.hardCapUsd).toBeGreaterThan(0);
   });

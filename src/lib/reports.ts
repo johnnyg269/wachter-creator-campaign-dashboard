@@ -110,6 +110,8 @@ export interface ReportsData {
     historyStart: string | null;
     dateFrom: string | null;
     dateTo: string;
+    /** Most recent successful refresh across all platforms (header timestamp). */
+    lastSuccessfulRefreshAt: string | null;
     campaignName: string;
     creatorName: string;
     company: string;
