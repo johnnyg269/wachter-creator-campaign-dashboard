@@ -21,9 +21,7 @@ export async function ensureSeedData(store: Store): Promise<Campaign> {
     startDate: null,
   });
 
-  for (const name of DEFAULT_EPISODE_GROUPS) {
-    await store.upsertEpisodeGroupByName({ campaignId: campaign.id, name, description: null });
-  }
+  await seedDefaultEpisodes(store, campaign.id);
 
   const profileIdByPlatform = new Map<string, string>();
   for (const seed of SEED_PROFILES) {
@@ -88,6 +86,58 @@ export async function ensureSeedData(store: Store): Promise<Campaign> {
     }
   }
   return campaign;
+}
+
+/**
+ * Seed the default content concepts ONLY at true initial setup.
+ *
+ * Bug fix (2026-06-13): `ensureSeedData` runs on every page load (via
+ * getHealth) and every refresh. The old code unconditionally upserted every
+ * DEFAULT_EPISODE_GROUPS name, so a concept an admin had deleted was recreated
+ * with a fresh id + createdAt and reappeared at the bottom of the list.
+ *
+ * New rule: if ANY episode group already exists, do nothing — admin is the
+ * sole authority over the concept list from then on, and deletes are
+ * permanent. On a truly empty list (first run, or every concept deleted) we
+ * still skip any default whose most recent admin action was a delete
+ * (tombstone), so deleted defaults never resurrect.
+ */
+async function seedDefaultEpisodes(store: Store, campaignId: string): Promise<void> {
+  const existing = await store.listEpisodeGroups();
+  if (existing.length > 0) return; // already initialized — never recreate/duplicate
+
+  const tombstoned = await tombstonedEpisodeNames(store);
+  for (const name of DEFAULT_EPISODE_GROUPS) {
+    if (tombstoned.has(name)) {
+      console.info(`[seed] skipping default concept "${name}" — previously deleted (tombstone)`);
+      continue;
+    }
+    await store.upsertEpisodeGroupByName({ campaignId, name, description: null });
+  }
+}
+
+/**
+ * Names whose most recent episode admin action was a delete. Derived from the
+ * ManualOverride audit log (entityType "episode") — a durable tombstone that
+ * needs no schema change. The admin routes write `created` (newValue=name) and
+ * `deleted` (oldValue=name) rows; the latest action per name wins, so a
+ * delete → recreate → delete sequence resolves correctly.
+ */
+async function tombstonedEpisodeNames(store: Store): Promise<Set<string>> {
+  const overrides = await store.listOverrides(1000);
+  const latest = new Map<string, { at: string; deleted: boolean }>();
+  for (const o of overrides) {
+    if (o.entityType !== "episode") continue;
+    const name = o.field === "created" ? o.newValue : o.field === "deleted" ? o.oldValue : null;
+    if (!name) continue;
+    const prev = latest.get(name);
+    if (!prev || o.createdAt > prev.at) {
+      latest.set(name, { at: o.createdAt, deleted: o.field === "deleted" });
+    }
+  }
+  const out = new Set<string>();
+  for (const [name, v] of latest) if (v.deleted) out.add(name);
+  return out;
 }
 
 /** Effective discovery cutoff: campaign start, else earliest seed publish, else 30d back. */
