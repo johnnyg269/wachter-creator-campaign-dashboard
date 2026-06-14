@@ -58,10 +58,7 @@ export function ApifySetup({
   const [actorInputs, setActorInputs] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const p of PLATFORMS) {
-      init[p] =
-        providerConfigs.find((c) => c.platform === p)?.actorId ??
-        healthPlatforms.find((h) => h.platform === p)?.actorId ??
-        "";
+      init[p] = providerConfigs.find((c) => c.platform === p)?.actorId ?? "";
     }
     return init;
   });

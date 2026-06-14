@@ -62,7 +62,6 @@ export interface PlatformHealth {
   sourceStatus: SourceStatus;
   statusDetail: string | null;
   lastSuccessfulRefreshAt: string | null;
-  actorId: string | null;
   supportsComments: boolean;
   supportsDiscovery: boolean;
 }
@@ -107,7 +106,6 @@ export async function getHealth(): Promise<HealthSummary> {
         : r.readiness.sourceStatus,
       statusDetail: r.readiness.detail,
       lastSuccessfulRefreshAt: r.config?.lastSuccessfulRefreshAt ?? null,
-      actorId: r.provider.providerType === "apify" ? (r.config?.actorId ?? null) : null,
       supportsComments: r.provider.supportsComments,
       supportsDiscovery: r.provider.supportsDiscovery,
     };
@@ -118,6 +116,50 @@ export async function getHealth(): Promise<HealthSummary> {
     platforms,
     lastRun: runs[0] ?? null,
     anyLive: platforms.some((p) => p.sourceStatus === "live"),
+  };
+}
+
+export interface PublicPlatformHealth {
+  platform: Platform;
+  sourceStatus: SourceStatus;
+  lastSuccessfulRefreshAt: string | null;
+  supportsComments: boolean;
+  supportsDiscovery: boolean;
+}
+
+export interface PublicHealthSummary {
+  store: { kind: StoreInfo["kind"] };
+  mockMode: boolean;
+  anyLive: boolean;
+  platforms: PublicPlatformHealth[];
+  lastRun: { status: string; startedAt: string; finishedAt: string | null } | null;
+}
+
+/**
+ * Public, no-auth projection of the health summary for the /api/status badge.
+ * Deliberately drops every internal/vendor field — the data vendor
+ * (providerType), Apify actor ids, free-text status detail, and raw run logs
+ * must never reach an unauthenticated surface. Pure + unit-tested.
+ */
+export function toPublicHealth(health: HealthSummary): PublicHealthSummary {
+  return {
+    store: { kind: health.store.kind },
+    mockMode: health.mockMode,
+    anyLive: health.anyLive,
+    platforms: health.platforms.map((p) => ({
+      platform: p.platform,
+      sourceStatus: p.sourceStatus,
+      lastSuccessfulRefreshAt: p.lastSuccessfulRefreshAt,
+      supportsComments: p.supportsComments,
+      supportsDiscovery: p.supportsDiscovery,
+    })),
+    lastRun: health.lastRun
+      ? {
+          status: health.lastRun.status,
+          startedAt: health.lastRun.startedAt,
+          finishedAt: health.lastRun.finishedAt,
+        }
+      : null,
   };
 }
 
@@ -961,11 +1003,18 @@ export async function getAdminPageData(): Promise<AdminPageData> {
       (a) => a.platform === "youtube" && a.provider === "apify",
     ),
   };
+  // Actor IDs are admin-only — read them from the persisted provider configs,
+  // never from the (publicly served) health summary. Mirror the old behavior:
+  // only platforms actually served by Apify surface an actor id.
+  const providerConfigs = await store.listProviderConfigs();
   const actorIds = { tiktok: null, instagram: null, facebook: null, youtube: null } as Record<
     Platform,
     string | null
   >;
-  for (const p of health.platforms) actorIds[p.platform] = p.actorId;
+  for (const p of health.platforms) {
+    if (p.providerType !== "apify") continue;
+    actorIds[p.platform] = providerConfigs.find((c) => c.platform === p.platform)?.actorId ?? null;
+  }
   const completeness: Record<string, Completeness> = {};
   for (const v of data.videos) {
     const m = data.metricsByVideo.get(v.id);
@@ -1009,7 +1058,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     }),
     unassignedVideoCount: data.videos.filter((v) => !v.hidden && !v.episodeGroupId).length,
     refreshRuns: await store.listRefreshRuns(15),
-    providerConfigs: await store.listProviderConfigs(),
+    providerConfigs,
     tokenStatus: await checkToken(),
     overrides: await store.listOverrides(30),
     completeness,

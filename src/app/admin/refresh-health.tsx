@@ -106,6 +106,35 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
   });
   const h = HEALTH_STYLE[health];
 
+  // Skipped-refresh reasons (recent window) — cost-control transparency. The
+  // skip kind is encoded in rawLog[0] as "skipped (<kind>): <reason>".
+  const skipKinds: Record<string, number> = {};
+  for (const r of runs) {
+    if (r.status !== "skipped") continue;
+    const kind = r.rawLog?.[0]?.match(/skipped \(([a-z_]+)\)/i)?.[1] ?? "other";
+    skipKinds[kind] = (skipKinds[kind] ?? 0) + 1;
+  }
+  const skipTotal = Object.values(skipKinds).reduce((a, b) => a + b, 0);
+  const skipSummary = Object.entries(skipKinds)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ");
+
+  // Busiest source today by actor-run count — a no-cost proxy for the most
+  // expensive platform (per-run USD lives in the Apify console, not here).
+  const PLATFORM_LABEL: Record<string, string> = {
+    tiktok: "TikTok",
+    instagram: "Instagram",
+    facebook: "Facebook",
+    youtube: "YouTube",
+  };
+  const runsByPlatformToday: Record<string, number> = {};
+  for (const a of actorAttempts) {
+    if (localDateKey(new Date(a.capturedAt), cfg.quietTimezone) !== todayKey) continue;
+    runsByPlatformToday[a.platform] = (runsByPlatformToday[a.platform] ?? 0) + 1;
+  }
+  const busiest = Object.entries(runsByPlatformToday).sort((a, b) => b[1] - a[1])[0] ?? null;
+
   return (
     <Card>
       <CardHeader
@@ -286,6 +315,31 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
                   {" "}· last overnight skip <TimeAgo iso={lastQuietSkip.startedAt} />
                 </>
               )}
+            </span>
+          </Stat>
+          <Stat label="Last by type">
+            {lastFullAt ? (
+              <>
+                full <TimeAgo iso={lastFullAt} />
+              </>
+            ) : (
+              "full —"
+            )}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              discovery {lastDiscoveryAt ? <TimeAgo iso={lastDiscoveryAt} /> : "—"} · comment detail{" "}
+              {lastCommentsAt ? <TimeAgo iso={lastCommentsAt} /> : "—"}
+            </span>
+          </Stat>
+          <Stat label="Busiest source today">
+            {busiest ? `${PLATFORM_LABEL[busiest[0]] ?? busiest[0]} · ${busiest[1]} runs` : "—"}
+            <span className="block text-[10px] font-normal text-muted-strong">
+              Most actor runs today (cost proxy) · per-run $ in the Apify console
+            </span>
+          </Stat>
+          <Stat label="Skipped refreshes (recent)">
+            {skipTotal} skipped
+            <span className="block text-[10px] font-normal text-muted-strong">
+              {skipSummary || "none in the recent window"}
             </span>
           </Stat>
         </div>

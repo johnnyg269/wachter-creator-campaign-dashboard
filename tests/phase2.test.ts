@@ -50,7 +50,6 @@ describe("describeSourceCapability wording", () => {
     sourceStatus: "live",
     statusDetail: null,
     lastSuccessfulRefreshAt: null,
-    actorId: "x",
     supportsComments: true,
     supportsDiscovery: true,
     ...over,
