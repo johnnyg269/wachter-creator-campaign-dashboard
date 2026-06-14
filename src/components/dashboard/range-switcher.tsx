@@ -12,17 +12,24 @@ const RANGES: Array<{ value: TimeRange; label: string }> = [
   { value: "all", label: "All" },
 ];
 
-export function RangeSwitcher({ active }: { active: TimeRange }) {
+export function RangeSwitcher({
+  active,
+  basePath = "/",
+}: {
+  active: TimeRange;
+  /** Page the range links point at — "/" for the dashboard, "/videos" etc. */
+  basePath?: string;
+}) {
   return (
     <div
       className="flex items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5"
       role="group"
-      aria-label="Trend time range"
+      aria-label="Time range"
     >
       {RANGES.map((r) => (
         <Link
           key={r.value}
-          href={`/?range=${r.value}`}
+          href={`${basePath}?range=${r.value}`}
           aria-current={r.value === active ? "page" : undefined}
           className={clsx(
             "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",

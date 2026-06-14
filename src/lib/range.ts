@@ -18,6 +18,54 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric" });
 }
 
+/**
+ * Per-video view growth WITHIN a window: last confirmed views minus first
+ * confirmed views captured in [from, now]. Real readings only — `gained` is
+ * null when fewer than two confirmed readings fall inside the window.
+ * `coversFull` is true when tracking history reaches back to `from` (so the
+ * number represents the whole window, not a partial slice). Pure + tested.
+ */
+export function videoGrowthInWindow(
+  snaps: MetricSnapshot[],
+  from: Date,
+): { gained: number | null; coversFull: boolean } {
+  const fromIso = from.toISOString();
+  const confirmed = snaps
+    .filter((s) => s.capturedAt >= fromIso && s.views !== null)
+    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
+  if (confirmed.length < 2) return { gained: null, coversFull: false };
+  const gained = (confirmed[confirmed.length - 1].views as number) - (confirmed[0].views as number);
+  // History covers the window if a confirmed reading exists at/before `from`.
+  const coversFull = snaps.some((s) => s.views !== null && s.capturedAt <= fromIso);
+  return { gained, coversFull };
+}
+
+/**
+ * Compact sparkline series for one video: confirmed view values captured in
+ * [from, now], downsampled to at most `maxPoints` evenly-spaced samples. Real
+ * snapshots only — no smoothing, no interpolation, no invented points.
+ * Returns null when there are fewer than 3 real points (too sparse to draw).
+ * Pure + tested.
+ */
+export function viewSparkline(
+  snaps: MetricSnapshot[],
+  from: Date,
+  maxPoints = 16,
+): number[] | null {
+  const fromIso = from.toISOString();
+  const values = snaps
+    .filter((s) => s.capturedAt >= fromIso && s.views !== null)
+    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+    .map((s) => s.views as number);
+  if (values.length < 3) return null;
+  if (values.length <= maxPoints) return values;
+  // Evenly sample, always keeping the first and last real readings.
+  const out: number[] = [];
+  const step = (values.length - 1) / (maxPoints - 1);
+  for (let i = 0; i < maxPoints; i++) out.push(values[Math.round(i * step)]);
+  return out;
+}
+
 function shortDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
     month: "short",

@@ -43,7 +43,13 @@ import {
   type FreshnessLevel,
 } from "./executive";
 import { ensureSeedData } from "./seed";
-import { fastestGrowingInWindow, topGrowersInWindow } from "./range";
+import {
+  RANGE_MS,
+  fastestGrowingInWindow,
+  topGrowersInWindow,
+  videoGrowthInWindow,
+  viewSparkline,
+} from "./range";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
@@ -577,24 +583,128 @@ function deltaComments24h(snaps: MetricSnapshot[]): number | null {
 // Videos page
 // ---------------------------------------------------------------------------
 
+/** Per-video audience-signal rollup from real scraped comment rows. */
+export interface VideoAudienceSignal {
+  /** Comment rows we actually captured for this video. */
+  capturedComments: number;
+  /** Rows flagged needsResponse (question / negative / hiring intent). */
+  needsResponse: number;
+  /** Most common signal among this video's comments, or null. */
+  topSignal: string | null;
+}
+
+export type VideoRowData = VideoMetrics & {
+  episodeName: string | null;
+  profileUrl: string | null;
+  /** Views gained within the selected range (real snapshots; null if sparse). */
+  periodGrowth: number | null;
+  /** True when history spans the whole selected window. */
+  periodCoversFull: boolean;
+  /** Confirmed-view sparkline within the range (real points; null if sparse). */
+  sparkline: number[] | null;
+  /** Per-video audience signals from captured comments. */
+  audience: VideoAudienceSignal;
+};
+
 export interface VideosPageData {
   campaign: Campaign;
   episodes: EpisodeGroup[];
-  rows: Array<VideoMetrics & { episodeName: string | null; profileUrl: string | null }>;
+  rows: VideoRowData[];
+  range: TimeRange;
+  rangeLabel: string;
+  /** Earliest snapshot across all videos — when tracking history begins. */
+  historyStart: string | null;
+  /** Distinct live/connected platforms among tracked videos. */
+  platformCount: number;
+  /** Most recent successful per-video refresh time. */
+  lastUpdatedAt: string | null;
 }
 
-export async function getVideosPageData(): Promise<VideosPageData> {
+const RANGE_LABELS: Record<TimeRange, string> = {
+  "24h": "last 24 hours",
+  "7d": "last 7 days",
+  "30d": "last 30 days",
+  all: "all time",
+};
+
+/** Top comment signal: questions / response-worthy / recruiting / sentiment. */
+function topCommentSignal(comments: Comment[]): string | null {
+  if (comments.length === 0) return null;
+  const counts: Record<string, number> = {};
+  const bump = (k: string) => (counts[k] = (counts[k] ?? 0) + 1);
+  const recruiting = new Set(["hiring", "job/career", "apply", "bootcamp", "apprenticeship"]);
+  for (const c of comments) {
+    if (c.sentiment === "question") bump("Questions");
+    if (c.tags.includes("wachter")) bump("Wachter mentions");
+    if (c.tags.some((t) => recruiting.has(t))) bump("Recruiting interest");
+    if (c.sentiment === "positive") bump("Positive");
+    if (c.sentiment === "negative") bump("Negative");
+  }
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  return top ? top[0] : null;
+}
+
+export async function getVideosPageData(range: TimeRange = "7d"): Promise<VideosPageData> {
+  const store = getStore();
   const data = await loadCampaignData(true);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
   const profileById = new Map(data.profiles.map((p) => [p.id, p.profileUrl]));
-  return {
-    campaign: data.campaign,
-    episodes: data.episodes,
-    rows: data.videos.map((v) => ({
+
+  // Per-video captured comments (real rows) → audience signals.
+  const comments = await store.listComments({ limit: 2000 });
+  const commentsByVideo = new Map<string, Comment[]>();
+  for (const c of comments) {
+    const arr = commentsByVideo.get(c.videoId) ?? [];
+    arr.push(c);
+    commentsByVideo.set(c.videoId, arr);
+  }
+
+  // Window: clamp to real snapshot history so the period never spans dead time.
+  const now = new Date();
+  const earliest =
+    [...data.snapshotsByVideo.values()]
+      .flat()
+      .reduce<string | null>((min, s) => (min === null || s.capturedAt < min ? s.capturedAt : min), null);
+  const ms = range === "all" ? null : RANGE_MS[range];
+  const requestedFrom = ms ? new Date(now.getTime() - ms) : earliest ? new Date(earliest) : new Date(now.getTime() - RANGE_MS["7d"]);
+  const earliestFrom = earliest ? new Date(new Date(earliest).getTime() - 15 * 60 * 1000) : requestedFrom;
+  const from = requestedFrom > earliestFrom ? requestedFrom : earliestFrom;
+
+  let lastUpdatedAt: string | null = null;
+  const livePlatforms = new Set<string>();
+
+  const rows: VideoRowData[] = data.videos.map((v) => {
+    const snaps = data.snapshotsByVideo.get(v.id) ?? [];
+    const growth = videoGrowthInWindow(snaps, from);
+    const vComments = commentsByVideo.get(v.id) ?? [];
+    if (v.lastRefreshedAt && (!lastUpdatedAt || v.lastRefreshedAt > lastUpdatedAt)) {
+      lastUpdatedAt = v.lastRefreshedAt;
+    }
+    if (!v.hidden && v.sourceStatus === "live") livePlatforms.add(v.platform);
+    return {
       ...data.metricsByVideo.get(v.id)!,
       episodeName: v.episodeGroupId ? (episodeById.get(v.episodeGroupId) ?? null) : null,
       profileUrl: v.profileId ? (profileById.get(v.profileId) ?? null) : null,
-    })),
+      periodGrowth: growth.gained,
+      periodCoversFull: growth.coversFull,
+      sparkline: viewSparkline(snaps, from),
+      audience: {
+        capturedComments: vComments.length,
+        needsResponse: vComments.filter((c) => c.needsResponse).length,
+        topSignal: topCommentSignal(vComments),
+      },
+    };
+  });
+
+  return {
+    campaign: data.campaign,
+    episodes: data.episodes,
+    rows,
+    range,
+    rangeLabel: RANGE_LABELS[range],
+    historyStart: earliest,
+    platformCount: livePlatforms.size,
+    lastUpdatedAt,
   };
 }
 
