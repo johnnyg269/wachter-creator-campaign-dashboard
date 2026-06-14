@@ -4,6 +4,7 @@
 
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { TimeAgo } from "@/components/ui/time-ago";
+import { AnimatedText } from "@/components/ui/animated-text";
 import { formatDateTime } from "@/lib/format";
 import { REFRESH_LOCK_TTL_MS } from "@/lib/refresh";
 import {
@@ -114,7 +115,7 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
       <CardBody className="space-y-4 text-xs">
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <Stat label="Refresh health">
-            <span className={h.cls}>{h.label}</span>
+            <AnimatedText className={h.cls} text={h.label} />
             <span className="block text-[10px] font-normal text-muted-strong">
               Healthy = success within 1.5× the refresh cadence
             </span>

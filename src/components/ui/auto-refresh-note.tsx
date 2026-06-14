@@ -9,6 +9,7 @@
 import { AlertTriangle, Moon, RefreshCw } from "lucide-react";
 import { getStore } from "@/lib/store";
 import { TimeAgo } from "@/components/ui/time-ago";
+import { AnimatedText } from "@/components/ui/animated-text";
 import {
   REFRESH_DELAYED_AFTER_MIN,
   SCHEDULER,
@@ -44,7 +45,7 @@ export async function AutoRefreshNote({
   if (quiet) {
     const body = (
       <>
-        Refresh paused overnight · resumes at 6:00 AM ET
+        <AnimatedText text="Refresh paused overnight · resumes at 6:00 AM ET" />
         {lastSuccessAt && (
           <span className="text-muted-strong">
             {" "}· Last successful refresh <TimeAgo iso={lastSuccessAt} />
@@ -83,7 +84,7 @@ export async function AutoRefreshNote({
         >
           <span className="flex items-center gap-2">
             <span className="pulse-dot" aria-hidden />
-            Auto-refreshing every {SCHEDULER.cadenceMinutes} minutes
+            <AnimatedText text={`Auto-refreshing every ${SCHEDULER.cadenceMinutes} minutes`} />
           </span>
           {lastSuccessAt && (
             <span className="text-muted-strong">
@@ -99,7 +100,7 @@ export async function AutoRefreshNote({
         title={`Campaign data refreshes automatically about every ${SCHEDULER.cadenceMinutes} minutes during active hours. All viewers see the same saved data.`}
       >
         <RefreshCw size={12} className="text-muted-strong" aria-hidden />
-        Auto-refreshes every {SCHEDULER.cadenceMinutes} minutes
+        <AnimatedText text={`Auto-refreshes every ${SCHEDULER.cadenceMinutes} minutes`} />
         {lastSuccessAt && (
           <span className="text-muted-strong">
             · Last successful refresh <TimeAgo iso={lastSuccessAt} />
@@ -116,9 +117,13 @@ export async function AutoRefreshNote({
         title="The scheduled refresh is running behind. The dashboard shows the latest saved data."
       >
         <AlertTriangle size={12} aria-hidden />
-        {veryDelayed || !SCHEDULER.verified
-          ? "Scheduler may be delayed"
-          : "Refresh delayed, latest data shown"}
+        <AnimatedText
+          text={
+            veryDelayed || !SCHEDULER.verified
+              ? "Scheduler may be delayed"
+              : "Refresh delayed, latest data shown"
+          }
+        />
         {lastSuccessAt && (
           <span className="text-muted-strong">
             · Last successful refresh <TimeAgo iso={lastSuccessAt} />
@@ -133,7 +138,9 @@ export async function AutoRefreshNote({
       title="The scheduled refresh is running behind. The dashboard shows the latest saved data."
     >
       <AlertTriangle size={12} className="text-warning" aria-hidden />
-      {veryDelayed || !SCHEDULER.verified ? "Scheduler may be delayed" : "Refresh delayed, latest data shown"}
+      <AnimatedText
+        text={veryDelayed || !SCHEDULER.verified ? "Scheduler may be delayed" : "Refresh delayed, latest data shown"}
+      />
       {lastSuccessAt && (
         <span className="text-muted-strong">
           · Last successful refresh <TimeAgo iso={lastSuccessAt} />

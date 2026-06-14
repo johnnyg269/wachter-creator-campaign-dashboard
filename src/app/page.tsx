@@ -28,6 +28,7 @@ import {
 } from "@/lib/format";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CountUp } from "@/components/ui/count-up";
+import { AnimatedText } from "@/components/ui/animated-text";
 import { EmptyState } from "@/components/ui/empty-state";
 import { VideoThumb } from "@/components/ui/video-thumb";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
@@ -213,7 +214,7 @@ export default async function DashboardPage({
                   data.confidence.level === "building" ? "text-accent" : "text-foreground/80",
                 )}
               >
-                {data.confidence.headline}
+                <AnimatedText text={data.confidence.headline} />
               </span>
             </div>
           </div>
@@ -225,11 +226,15 @@ export default async function DashboardPage({
             </div>
             <div className="mt-1 flex items-baseline gap-3">
               <span className="tabular-nums text-5xl font-bold leading-none tracking-tighter lg:text-6xl">
-                {kpis.totalViews !== null ? <CountUp value={kpis.totalViews} /> : "—"}
+                {kpis.totalViews !== null ? (
+                  <AnimatedText text={formatCompact(kpis.totalViews)} rollOnMount />
+                ) : (
+                  "—"
+                )}
               </span>
               {kpis.viewsGained24h !== null && kpis.viewsGained24h > 0 && (
                 <span className="tabular-nums text-base font-semibold text-positive">
-                  <CountUp value={kpis.viewsGained24h} format="delta" />
+                  <AnimatedText text={formatDelta(kpis.viewsGained24h)} />
                   <span className="ml-1 text-[11px] font-medium text-positive/70">24h</span>
                 </span>
               )}
@@ -258,8 +263,10 @@ export default async function DashboardPage({
                       className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
                       style={{ background: PLATFORM_HEX[topPlatform.platform] }}
                     />
-                    {PLATFORM_LABELS[topPlatform.platform]} leads with {topPlatformShare}% of
-                    views
+                    <AnimatedText
+                      text={`${PLATFORM_LABELS[topPlatform.platform]} leads with ${topPlatformShare}% of views`}
+                      className="align-middle"
+                    />
                   </div>
                 )}
               </div>

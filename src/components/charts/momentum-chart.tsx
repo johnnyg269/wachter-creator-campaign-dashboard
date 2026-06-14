@@ -28,6 +28,7 @@ import type { ChartRange } from "@/lib/range";
 import type { Platform } from "@/lib/types";
 import { PLATFORM_LABELS, PLATFORMS } from "@/lib/types";
 import { formatCompact, formatDelta } from "@/lib/format";
+import { AnimatedText } from "@/components/ui/animated-text";
 
 type Metric = "views" | "engagements" | "comments";
 type ChartMode = "total" | "velocity";
@@ -416,10 +417,11 @@ export function MomentumChart({
               />
             </span>
             Now:{" "}
-            <span className="tabular-nums font-semibold text-foreground">
-              {formatCompact(last[metric] as number | null)}
-            </span>
-            {meta.label.toLowerCase()}
+            <AnimatedText
+              className="tabular-nums font-semibold text-foreground"
+              text={formatCompact(last[metric] as number | null)}
+            />
+            <AnimatedText text={meta.label.toLowerCase()} />
           </div>
         )}
       </div>

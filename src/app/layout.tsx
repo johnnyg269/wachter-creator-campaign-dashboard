@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import "slot-text/style.css";
 import { AppShell } from "@/components/layout/app-shell";
 
 // Inter is the app's single text face — variable font, weights 400–700 in
