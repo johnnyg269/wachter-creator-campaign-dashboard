@@ -15,6 +15,7 @@ import { PLATFORM_HEX } from "@/components/ui/platform";
 import { Sparkline } from "@/components/charts/sparkline";
 import { SlidingTabs } from "@/components/ui/sliding-tabs";
 import { PLATFORM_LABELS, type Platform } from "@/lib/types";
+import { computeMilestones, topMilestone } from "@/lib/milestones";
 import {
   DEFAULT_FILTERS,
   METRIC_FOCUSES,
@@ -334,8 +335,46 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
   // Campaign-momentum sparkline: real confirmed-view readings only (no fakes).
   const trendPoints = data.overallTrend.map((p) => p.views).filter((v): v is number => v !== null);
 
+  // Board report shows at most ONE key milestone, and only when a MAJOR one
+  // exists (Phase 7, Part 3C) — never an operational milestone list.
+  const keyMilestone = topMilestone(
+    computeMilestones({
+      totalViews: roll.totalViews,
+      totalEngagements: roll.totalEngagements,
+      totalComments: roll.totalComments,
+      periodViewsGained: roll.totalGrowth,
+      rangeLabel: data.meta.rangeLabel,
+      platforms: platRolls.map((r) => ({
+        platform: r.platform,
+        label: PLATFORM_LABELS[r.platform],
+        views: r.totalViews,
+        viewsGained: r.totalGrowth,
+      })),
+      topVideo: (() => {
+        const tv = rankVideos(vids, "views")[0];
+        return tv ? { title: tv.title ?? "Top video", platform: tv.platform, views: tv.views } : null;
+      })(),
+      trend: data.overallTrend.map((p) => ({ t: p.t, views: p.views })),
+      topConcept: bestConcept ? { name: bestConcept.name, views: bestConcept.totalViews } : null,
+    }),
+  );
+  const showMilestone = keyMilestone?.severity === "major";
+
   return (
     <div className="flex h-full flex-col gap-4">
+      {showMilestone && keyMilestone && (
+        <div
+          className="flex items-center gap-2.5 rounded-lg border px-4 py-2"
+          style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}
+        >
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--accent)" }} />
+          <span className="text-[12px] font-semibold uppercase tracking-wide text-muted">Key milestone</span>
+          <span className="truncate text-[13px] font-medium">
+            {keyMilestone.title}
+            <span className="font-normal text-muted-strong"> · {keyMilestone.description}</span>
+          </span>
+        </div>
+      )}
       {/* KPI strip (7) — board language */}
       <div className="grid grid-cols-7 gap-2.5">
         <Kpi label="Total reach" value={formatCompact(roll.totalViews)} sub="views" highlight={f.metric === "views"} />

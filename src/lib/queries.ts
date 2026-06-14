@@ -13,6 +13,7 @@ import {
   type MetricSnapshot,
   type Platform,
   PLATFORMS,
+  PLATFORM_LABELS,
   type PlatformProfile,
   type ProviderConfig,
   type ProviderType,
@@ -53,6 +54,7 @@ import {
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
+import { computeMilestones, type Milestone, type MilestoneInput } from "./milestones";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -941,6 +943,8 @@ export interface AdminPageData {
   completeness: Record<string, Completeness>;
   /** Recent collection attempts (the provider attempt log). */
   attempts: CollectionAttempt[];
+  /** All computed campaign milestones (uncapped) — admin diagnostics. */
+  milestones: Milestone[];
   /** YouTube provider health — API vs Apify fallback (never the key value). */
   youtubeProvider: YouTubeProviderStatus;
   /** Per-episode rollups for the admin Episodes manager. */
@@ -980,11 +984,53 @@ export interface YouTubeProviderStatus {
   apifyFallbackUsedRecently: boolean;
 }
 
+/**
+ * Build the (pure, serializable) milestone-engine input from already-loaded
+ * dashboard data. Shared by the public dashboard and the admin diagnostics so
+ * both compute identical milestones. Per-platform period growth is first→last
+ * confirmed views in the platform trend (same basis as periodDelta).
+ */
+export function dashboardMilestoneInput(data: DashboardData, rangeLabel: string): MilestoneInput {
+  const platformGrowth = (platform: Platform): number | null => {
+    const vals = (data.trendByPlatform[platform] ?? [])
+      .map((p) => p.views)
+      .filter((v): v is number => v !== null);
+    return vals.length >= 2 ? vals[vals.length - 1] - vals[0] : null;
+  };
+  const top = data.leaderboard.mostViewed[0] ?? null;
+  return {
+    totalViews: data.kpis.totalViews,
+    totalEngagements: data.kpis.totalEngagements,
+    totalComments: data.kpis.totalComments,
+    periodViewsGained: data.periodDelta.views,
+    rangeLabel,
+    platforms: data.platformStats.map((s) => ({
+      platform: s.platform,
+      label: PLATFORM_LABELS[s.platform],
+      views: s.views,
+      viewsGained: platformGrowth(s.platform),
+    })),
+    topVideo: top
+      ? {
+          title: top.video.title ?? "Top video",
+          platform: top.video.platform,
+          views: top.confirmed.views?.value ?? top.latest?.views ?? null,
+        }
+      : null,
+    trend: data.trend.map((p) => ({ t: p.t, views: p.views })),
+    topConcept: null,
+  };
+}
+
 export async function getAdminPageData(): Promise<AdminPageData> {
   const store = getStore();
   const data = await loadCampaignData(true);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
   const health = await getHealth();
+  // Full (uncapped) milestone list for admin diagnostics — lifetime view.
+  const milestones = computeMilestones(
+    dashboardMilestoneInput(await getDashboardData("all"), "all time"),
+  );
   const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
     b.capturedAt.localeCompare(a.capturedAt),
   );
@@ -1063,6 +1109,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     overrides: await store.listOverrides(30),
     completeness,
     attempts: allAttempts.slice(0, 40),
+    milestones,
     youtubeProvider,
     readiness: {
       databaseConnected: health.store.kind === "postgres",

@@ -14,7 +14,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { MessagesSquare, Sparkles, TrendingUp } from "lucide-react";
-import { getDashboardData, type TimeRange } from "@/lib/queries";
+import { getDashboardData, dashboardMilestoneInput, type TimeRange } from "@/lib/queries";
 import { PLATFORM_LABELS, type Platform } from "@/lib/types";
 import type { TrendPoint } from "@/lib/metrics";
 import {
@@ -38,6 +38,8 @@ import { RangeSwitcher } from "@/components/dashboard/range-switcher";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
 import { FeaturedVideo } from "@/components/dashboard/featured-video";
 import { PlatformLeaderboard } from "@/components/dashboard/platform-leaderboard";
+import { CampaignMilestones } from "@/components/dashboard/milestones";
+import { computeMilestones, selectTopMilestones } from "@/lib/milestones";
 import { MomentumCard } from "@/components/dashboard/momentum-card";
 import { CommentIntelCard } from "@/components/dashboard/comment-intel-card";
 import { AlertsPreview } from "@/components/dashboard/alerts-preview";
@@ -135,6 +137,14 @@ export default async function DashboardPage({
     topPlatform && totalPlatformViews > 0
       ? Math.round(((topPlatform.views ?? 0) / totalPlatformViews) * 100)
       : null;
+
+  // Campaign milestones — REAL achievements from the latest snapshot, top 3–5.
+  // Computed via the shared engine input (identical to admin diagnostics).
+  // Dynamic-only (no persisted "first crossed" dates).
+  const milestones = selectTopMilestones(
+    computeMilestones(dashboardMilestoneInput(data, RANGE_LABELS[range].toLowerCase())),
+    5,
+  );
 
   // Editorial momentum headline — real data only.
   const momentumHeadline = !trendHasData
@@ -239,6 +249,14 @@ export default async function DashboardPage({
                 </span>
               )}
             </div>
+            {/* Exact total beneath the shortened hero number — real current
+                snapshot total, comma-formatted, quiet (never competes with the
+                big number; intentionally not animated). */}
+            {kpis.totalViews !== null && (
+              <div className="tabular-nums mt-1.5 text-[12px] text-muted-strong">
+                {formatNumber(kpis.totalViews)} total views
+              </div>
+            )}
             {/* Platform share strip */}
             {totalPlatformViews > 0 && (
               <div className="mt-4">
@@ -505,6 +523,11 @@ export default async function DashboardPage({
             )}
           </div>
         </section>
+
+        {/* ── 3.5 · Campaign milestones — real achievements, compact ── */}
+        {milestones.length > 0 && (
+          <CampaignMilestones milestones={milestones} />
+        )}
 
         {/* ── 4 · What's happening now — editorial story strip ── */}
         {story.length > 0 && (

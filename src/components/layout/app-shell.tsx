@@ -38,7 +38,6 @@ function NavLinks({ onNavigate, alertCount = 0 }: { onNavigate?: () => void; ale
     <nav className="flex flex-col gap-1">
       {NAV.map(({ href, label, icon: Icon }) => {
         const active = pathname === href;
-        const showBadge = href === "/alerts" && alertCount > 0;
         return (
           <Link
             key={href}
@@ -58,15 +57,18 @@ function NavLinks({ onNavigate, alertCount = 0 }: { onNavigate?: () => void; ale
                 className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent"
               />
             )}
-            {/* Bell carries the notification badge (real open-alert count). */}
-            <span className="relative inline-flex">
-              <Icon size={16} className={active ? "text-accent" : "text-muted-strong"} />
-              {href === "/alerts" && (
-                <NotificationBadge count={alertCount} srLabel={`${alertCount} open alert${alertCount === 1 ? "" : "s"}`} />
-              )}
-            </span>
-            {label}
-            {showBadge && <span className="sr-only"> ({alertCount} open)</span>}
+            <Icon size={16} className={active ? "text-accent" : "text-muted-strong"} />
+            <span>{label}</span>
+            {/* Alerts: a compact pill pinned to the right of the row (real
+                open-alert count) — cleaner than a bubble floating over the icon. */}
+            {href === "/alerts" && (
+              <NotificationBadge
+                inline
+                count={alertCount}
+                className="ml-auto"
+                srLabel={`${alertCount} open alert${alertCount === 1 ? "" : "s"}`}
+              />
+            )}
           </Link>
         );
       })}

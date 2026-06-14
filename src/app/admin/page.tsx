@@ -25,6 +25,7 @@ const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
   { id: "youtube", label: "YouTube Provider" },
+  { id: "milestones", label: "Milestones" },
   { id: "episodes", label: "Episodes" },
   { id: "campaign", label: "Campaign" },
   { id: "apify", label: "Apify Setup" },
@@ -274,6 +275,52 @@ export default async function AdminPage() {
                 }`}
                 detail="The Apify YouTube scraper runs only when the API is unavailable"
               />
+            </CardBody>
+          </Card>
+        </section>
+
+        <section id="milestones">
+          <Card>
+            <CardHeader
+              title="Campaign milestones (diagnostics)"
+              subtitle="All milestones the engine fires from the latest snapshot — computed dynamically (lifetime view), not persisted"
+            />
+            <CardBody className="text-xs">
+              {data.milestones.length === 0 ? (
+                <p className="text-muted">No milestones supported by the current data yet.</p>
+              ) : (
+                <ul className="flex flex-col divide-y divide-border">
+                  {data.milestones.map((m) => (
+                    <li key={m.id} className="flex items-start gap-3 py-2">
+                      <span
+                        className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                        style={{
+                          color:
+                            m.severity === "major"
+                              ? "var(--accent)"
+                              : m.severity === "notable"
+                                ? "var(--foreground)"
+                                : "var(--muted-strong)",
+                          background: "var(--surface)",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        {m.severity}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">
+                          {m.title}
+                          <span className="ml-2 font-mono text-[10px] text-muted-strong">[{m.type}]</span>
+                        </div>
+                        <div className="text-muted">{m.description}</div>
+                      </div>
+                      <span className="tabular shrink-0 text-muted-strong">
+                        {m.value !== null ? new Intl.NumberFormat("en-US").format(m.value) : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardBody>
           </Card>
         </section>

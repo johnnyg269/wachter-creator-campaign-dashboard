@@ -13,20 +13,37 @@ export function NotificationBadge({
   count,
   className,
   srLabel,
+  inline = false,
 }: {
   count: number;
   className?: string;
   /** Screen-reader description, e.g. "3 open alerts". */
   srLabel?: string;
+  /**
+   * `inline` renders the pill in normal flow (e.g. pinned to the right of a nav
+   * row) instead of floating absolutely over the trigger icon — cleaner and
+   * less noisy than an over-icon bubble. The pop/slide transition is preserved.
+   */
+  inline?: boolean;
 }) {
   const open = count > 0;
+  const display = count > 99 ? "99+" : String(count);
   return (
-    <span className={clsx("t-badge", className)} data-open={open ? "true" : "false"}>
+    <span
+      className={clsx("t-badge", className)}
+      // Override the over-icon absolute positioning for the inline variant.
+      style={inline ? { position: "relative", top: "auto", right: "auto" } : undefined}
+      data-open={open ? "true" : "false"}
+    >
       <span
-        className="t-badge-dot flex h-[15px] min-w-[15px] items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none text-white"
-        style={{ background: "var(--negative)" }}
+        className="t-badge-dot tabular flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none text-white"
+        style={{
+          // Softer, less cartoonish red than the raw negative token.
+          background: "color-mix(in oklab, var(--negative) 88%, #000 12%)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
+        }}
       >
-        {open ? (count > 99 ? "99+" : count) : ""}
+        {open ? display : ""}
       </span>
       {open && srLabel && <span className="sr-only">{srLabel}</span>}
     </span>
