@@ -37,3 +37,5 @@ npx vercel@latest deploy --prod --yes
 - **cron-job.org** is an external scheduler that calls `/api/cron/refresh` on a
   schedule; it is independent of how the app is deployed and is unaffected by
   the GitHub/Vercel connection.
+
+<!-- auto-deploy connected 2026-06-13 -->
