@@ -76,6 +76,29 @@ export default async function AdminPage() {
   const data = await getAdminPageData();
   const passwordSet = adminPasswordConfigured();
 
+  // Data-source readiness reflects the PROVIDER model, not just Apify actor IDs.
+  // TikTok/Instagram/Facebook use Apify; YouTube prefers the official Data API
+  // (no Apify actor needed) and only falls back to Apify when no key is set.
+  const apifyPlatforms = ["tiktok", "instagram", "facebook"] as const;
+  const apifyReady = apifyPlatforms.every((p) => Boolean(data.readiness.actorIds[p]));
+  const ytApiPrimary = data.youtubeProvider.mode === "youtube_api";
+  const ytApifyFallback = Boolean(data.readiness.actorIds.youtube);
+  const youtubeReady = ytApiPrimary || ytApifyFallback; // healthy with either
+  const youtubeSourceLabel = ytApiPrimary
+    ? ytApifyFallback
+      ? "API ✓, fallback available"
+      : "API ✓"
+    : ytApifyFallback
+      ? "Apify ✓ (fallback)"
+      : "not configured";
+  const dataSourcesReady = apifyReady && youtubeReady;
+  const dataSourcesDetail = [
+    `TikTok: ${data.readiness.actorIds.tiktok ? "Apify ✓" : "Apify —"}`,
+    `Instagram: ${data.readiness.actorIds.instagram ? "Apify ✓" : "Apify —"}`,
+    `Facebook: ${data.readiness.actorIds.facebook ? "Apify ✓" : "Apify —"}`,
+    `YouTube: ${youtubeSourceLabel}`,
+  ].join("  ·  ");
+
   return (
     <div className="mx-auto max-w-6xl">
       <DataNotice health={data.health} />
@@ -137,13 +160,10 @@ export default async function AdminPage() {
                 }
               />
               <ReadinessRow
-                ok={(Object.values(data.readiness.actorIds) as Array<string | null>).every(Boolean)}
-                label={`Actor IDs: ${
-                  (Object.values(data.readiness.actorIds) as Array<string | null>).filter(Boolean).length
-                }/4 configured`}
-                detail={(["tiktok", "instagram", "facebook", "youtube"] as const)
-                  .map((p) => `${p}: ${data.readiness.actorIds[p] ? "✓" : "—"}`)
-                  .join("  ")}
+                ok={dataSourcesReady}
+                warnOnly
+                label={`Data sources: ${dataSourcesReady ? "all platforms connected" : "needs attention"}`}
+                detail={dataSourcesDetail}
               />
               <ReadinessRow
                 ok={Boolean(data.health.lastRun && data.health.lastRun.status !== "failed")}
