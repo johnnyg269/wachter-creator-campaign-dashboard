@@ -282,13 +282,14 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
 
   const attempted = report.platforms.filter((p) => p.status !== "skipped");
   const failed = report.platforms.filter((p) => p.status === "failed");
+  const partial = report.platforms.filter((p) => p.status === "partial");
   report.status =
     attempted.length === 0
       ? "partial"
-      : failed.length === 0
-        ? "success"
-        : failed.length === attempted.length
-          ? "failed"
+      : failed.length === attempted.length
+        ? "failed"
+        : failed.length === 0 && partial.length === 0
+          ? "success"
           : "partial";
   report.finishedAt = new Date().toISOString();
 
@@ -479,6 +480,21 @@ async function refreshPlatform(
       }
     }
 
+    // Empty-cycle protection. Facebook's actor alternates between a feed
+    // surface (carries views) and a reel-page surface (no usable records);
+    // some cycles return zero usable items even though the videos still exist
+    // and are healthy. Treat that as "partial — kept last-known-good", NOT a
+    // success that records a fresh timestamp and NOT a failure that wipes data.
+    // Only guards when we actually have tracked videos to protect.
+    if (groups.size === 0 && videos.length > 0) {
+      out.status = "partial";
+      out.reason = "Source returned no usable records this cycle — kept last-known-good data.";
+      log.push(
+        `${platform}: partial — 0 usable records returned, preserved ${videos.length} last-known-good video(s)`,
+      );
+      return out;
+    }
+
     for (const { merged: n, commentKeys } of groups.values()) {
       const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out);
       if (!video) continue;
@@ -580,16 +596,28 @@ async function refreshPlatform(
       `${platform}: ${out.videosUpdated} video(s), ${out.commentsUpdated} new comment(s), ${out.newVideosDiscovered} discovered, ${fetched.attempts.length} actor run(s)`,
     );
   } catch (e) {
-    out.status = "failed";
-    out.reason = e instanceof Error ? e.message : String(e);
-    log.push(`${platform}: FAILED — ${out.reason}`);
-    for (const v of videos) {
+    const reason = e instanceof Error ? e.message : String(e);
+    out.reason = reason;
+    // Last-known-good protection. A single thrown cycle must not wipe healthy
+    // data: videos that have refreshed successfully before keep their thumbnail,
+    // metrics, and "live" status (the display layer flags them stale). Only
+    // videos that have NEVER succeeded surface the failure to the user.
+    const everGood = videos.filter((v) => v.lastRefreshedAt !== null);
+    const neverGood = videos.filter((v) => v.lastRefreshedAt === null);
+    out.status = everGood.length > 0 ? "partial" : "failed";
+    log.push(
+      `${platform}: ${out.status === "partial" ? "partial" : "FAILED"} — ${reason}` +
+        (everGood.length > 0 ? ` (kept ${everGood.length} last-known-good video(s))` : ""),
+    );
+    for (const v of neverGood) {
       await store.updateVideo(v.id, {
         sourceStatus: "refresh_failed",
-        errorMessage: out.reason.slice(0, 300),
+        errorMessage: reason.slice(0, 300),
       });
     }
-    if (config) {
+    // Only flag the provider itself as failing when nothing could be salvaged;
+    // otherwise keep its last-known-good status so public health stays honest.
+    if (config && everGood.length === 0) {
       await store.upsertProviderConfig({ ...config, status: "actor_test_failed" });
     }
   }

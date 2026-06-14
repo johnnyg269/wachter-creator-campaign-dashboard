@@ -314,7 +314,7 @@ export interface RefreshReport {
   platforms: Array<{
     platform: Platform;
     providerType: ProviderType | null;
-    status: "ok" | "skipped" | "failed";
+    status: "ok" | "skipped" | "failed" | "partial";
     reason: string | null;
     videosUpdated: number;
     commentsUpdated: number;

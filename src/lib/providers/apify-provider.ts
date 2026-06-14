@@ -200,22 +200,32 @@ export class ApifyProvider implements SocialPlatformProvider {
       // (they update existing records; the refresh pipeline never inserts
       // pre-campaign videos as new).
       const margin = new Date(since.getTime() - 3 * 24 * 3600 * 1000);
-      items = await this.runWithMeta(
-        "discover",
-        {
-          profileUrl: profile.profileUrl,
-          sinceIso: margin.toISOString(),
-          limit: 50,
-          // Instagram: ride direct reel URLs along with discovery — the
-          // reel-page surface is fresher than the profile feed (verified
-          // live in Phase 3.3c) and costs no extra actor run.
-          knownVideoUrls:
-            this.platform === "instagram"
-              ? videos.slice(0, 12).map((v) => v.originalUrl)
-              : undefined,
-        },
-        { attempts: result.attempts },
-      );
+      try {
+        items = await this.runWithMeta(
+          "discover",
+          {
+            profileUrl: profile.profileUrl,
+            sinceIso: margin.toISOString(),
+            limit: 50,
+            // Instagram: ride direct reel URLs along with discovery — the
+            // reel-page surface is fresher than the profile feed (verified
+            // live in Phase 3.3c) and costs no extra actor run.
+            knownVideoUrls:
+              this.platform === "instagram"
+                ? videos.slice(0, 12).map((v) => v.originalUrl)
+                : undefined,
+          },
+          { attempts: result.attempts },
+        );
+      } catch {
+        // The profile-discovery surface returned nothing / errored this cycle.
+        // Facebook in particular alternates between a feed surface and a
+        // reel-page surface, and an empty discovery used to throw the WHOLE
+        // platform — marking every video failed and blanking the dashboard
+        // card every other refresh. The attempt is already recorded; fall
+        // through to the per-video URL follow-up below so tracked videos still
+        // refresh from their own URLs and last-known-good data is never wiped.
+      }
     }
 
     // Different surfaces of the same platform return the same video under
