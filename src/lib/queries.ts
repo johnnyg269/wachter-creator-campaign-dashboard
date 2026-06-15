@@ -55,6 +55,7 @@ import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
 import { computeMilestones, type Milestone, type MilestoneInput } from "./milestones";
+import { resolveViews } from "./apify/view-resolver";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -945,6 +946,8 @@ export interface AdminPageData {
   attempts: CollectionAttempt[];
   /** All computed campaign milestones (uncapped) — admin diagnostics. */
   milestones: Milestone[];
+  /** Per-video Facebook view-accuracy diagnostics (admin-only). */
+  facebookDiagnostics: FacebookDiagnostic[];
   /** YouTube provider health — API vs Apify fallback (never the key value). */
   youtubeProvider: YouTubeProviderStatus;
   /** Per-episode rollups for the admin Episodes manager. */
@@ -968,6 +971,29 @@ export interface AdminPageData {
     /** Average completeness across visible videos, 0–100. */
     avgCompleteness: number | null;
   };
+}
+
+export interface FacebookDiagnostic {
+  videoId: string;
+  title: string | null;
+  /** Short slug of the reel URL (never a secret). */
+  urlSlug: string;
+  /** Best view value the resolver extracts from the latest rawJson. */
+  resolvedViews: number | null;
+  extractionPath: string | null;
+  viewConfidence: string;
+  rawDisplayValue: string | null;
+  sourceSurface: string;
+  /** Confirmed (last-known-good) view value the dashboard actually shows. */
+  confirmedViews: number | null;
+  manualVerified: boolean;
+  stale: boolean;
+  /** A lower automated value was rejected by monotonic protection this cycle. */
+  monotonicPreserved: boolean;
+  hasThumbnail: boolean;
+  lastRefreshedAt: string | null;
+  /** Other tracked FB videos sharing this reel's id/canonical URL (dupes). */
+  duplicateCandidateIds: string[];
 }
 
 export interface YouTubeProviderStatus {
@@ -1031,6 +1057,51 @@ export async function getAdminPageData(): Promise<AdminPageData> {
   const milestones = computeMilestones(
     dashboardMilestoneInput(await getDashboardData("all"), "all time"),
   );
+
+  // Facebook view-accuracy diagnostics (admin-only). Runs the view resolver on
+  // each FB video's stored rawJson and pairs it with the confirmed value the
+  // dashboard shows. Only resolved values/paths are exposed — never rawJson.
+  const fbRawVideos = (await store.listVideos({ includeHidden: true })).filter(
+    (v) => v.platform === "facebook" && !v.hidden,
+  );
+  const fbKeyToIds = new Map<string, string[]>();
+  for (const v of fbRawVideos) {
+    for (const k of [v.externalVideoId, v.originalUrl].filter(Boolean) as string[]) {
+      fbKeyToIds.set(k, [...(fbKeyToIds.get(k) ?? []), v.id]);
+    }
+  }
+  const facebookDiagnostics: FacebookDiagnostic[] = fbRawVideos.map((v) => {
+    const res =
+      v.rawJson && typeof v.rawJson === "object"
+        ? resolveViews(v.rawJson as Record<string, unknown>, "facebook")
+        : ({ value: null, extractionPath: null, confidence: "none", sourceSurface: "unknown", rawDisplayValue: null } as const);
+    const confirmed = data.metricsByVideo.get(v.id)?.confirmed.views ?? null;
+    const snaps = (data.snapshotsByVideo.get(v.id) ?? [])
+      .slice()
+      .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
+    const latest = snaps[snaps.length - 1] ?? null;
+    const dupes = new Set<string>();
+    for (const k of [v.externalVideoId, v.originalUrl].filter(Boolean) as string[]) {
+      for (const id of fbKeyToIds.get(k) ?? []) if (id !== v.id) dupes.add(id);
+    }
+    return {
+      videoId: v.id,
+      title: v.title ?? v.caption ?? null,
+      urlSlug: (v.originalUrl ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 48),
+      resolvedViews: res.value,
+      extractionPath: res.extractionPath,
+      viewConfidence: res.confidence,
+      rawDisplayValue: res.rawDisplayValue,
+      sourceSurface: res.sourceSurface,
+      confirmedViews: confirmed?.value ?? null,
+      manualVerified: confirmed?.manual ?? false,
+      stale: confirmed?.stale ?? false,
+      monotonicPreserved: Boolean(latest && latest.views === null && confirmed?.value != null),
+      hasThumbnail: Boolean(v.thumbnailUrl),
+      lastRefreshedAt: v.lastRefreshedAt,
+      duplicateCandidateIds: [...dupes],
+    };
+  });
   const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
     b.capturedAt.localeCompare(a.capturedAt),
   );
@@ -1110,6 +1181,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     completeness,
     attempts: allAttempts.slice(0, 40),
     milestones,
+    facebookDiagnostics,
     youtubeProvider,
     readiness: {
       databaseConnected: health.store.kind === "postgres",

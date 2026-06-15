@@ -5,6 +5,7 @@
 import type { NormalizedComment, NormalizedVideo, Platform } from "../types";
 import { parseVideoUrl } from "../url-parse";
 import { deepFindMetric } from "./deep-extract";
+import { resolveViews } from "./view-resolver";
 
 type Raw = Record<string, unknown>;
 
@@ -58,16 +59,9 @@ function firstDate(obj: Raw, paths: string[]): string | null {
   return null;
 }
 
-const VIEW_PATHS = [
-  // Play counts come FIRST: when a source exposes both (Instagram reels return
-  // videoViewCount AND videoPlayCount), the platform UI displays PLAYS — the
-  // stricter "view" metric reads roughly half of what leadership sees in the
-  // app, which made the dashboard look stale. (Root cause of Phase 3.3c.)
-  "videoPlayCount", "playCount", "plays", "clips_play_count", "play_count",
-  "views", "viewCount", "videoViewCount",
-  "stats.playCount", "viewsCount", "video_view_count",
-  "shortViewCount", "viewCountText",
-];
+// View extraction now lives in ./view-resolver (resolveViews) — Facebook-aware:
+// prefers a true play/view count, parses formatted "124K"/"1.2M" strings, falls
+// back to the actor's stricter `viewsCount` proxy, and rejects unrelated counts.
 const LIKE_PATHS = [
   "likes", "likeCount", "diggCount", "stats.diggCount", "likesCount",
   "like_count", "reactionsCount", "reactions", "topReactionsCount", "numberOfLikes",
@@ -189,14 +183,14 @@ export function normalizeVideoItem(raw: Raw, platform: Platform): NormalizedVide
     externalVideoId = parseVideoUrl(url)?.externalVideoId ?? null;
   }
 
-  let views = firstNumber(obj, VIEW_PATHS);
+  // Views via the dedicated resolver (FB-aware; deep fallback built in).
+  const views = resolveViews(obj, platform).value;
   let likes = firstNumber(obj, LIKE_PATHS);
   let comments = firstNumber(obj, COMMENT_COUNT_PATHS);
   let shares = firstNumber(obj, SHARE_PATHS);
 
   // Defense-in-depth: when the explicit path lists miss, walk the raw object
   // for known metric field names (records the path for debuggability).
-  if (views === null) views = deepFindMetric(obj, "views")?.value ?? null;
   if (likes === null) likes = deepFindMetric(obj, "likes")?.value ?? null;
   if (comments === null) comments = deepFindMetric(obj, "comments")?.value ?? null;
   if (shares === null) shares = deepFindMetric(obj, "shares")?.value ?? null;

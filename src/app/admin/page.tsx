@@ -25,6 +25,7 @@ const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
   { id: "youtube", label: "YouTube Provider" },
+  { id: "facebook", label: "Facebook Views" },
   { id: "milestones", label: "Milestones" },
   { id: "episodes", label: "Episodes" },
   { id: "campaign", label: "Campaign" },
@@ -275,6 +276,74 @@ export default async function AdminPage() {
                 }`}
                 detail="The Apify YouTube scraper runs only when the API is unavailable"
               />
+            </CardBody>
+          </Card>
+        </section>
+
+        <section id="facebook">
+          <Card>
+            <CardHeader
+              title="Facebook view diagnostics"
+              subtitle="The Facebook actor's viewsCount is a stricter metric than the public 'plays' count and exposes no plays field. Use a manual correction (Tracked Content → Record correction) to set the real public play count — it is durable and audit-logged."
+            />
+            <CardBody className="overflow-x-auto text-xs">
+              {data.facebookDiagnostics.length === 0 ? (
+                <p className="text-muted">No Facebook videos tracked.</p>
+              ) : (
+                <table className="w-full min-w-[760px] text-left">
+                  <thead className="text-[10px] uppercase tracking-wide text-muted-strong">
+                    <tr className="border-b border-border">
+                      <th className="py-1.5 pr-3 font-medium">Reel</th>
+                      <th className="py-1.5 pr-3 font-medium">Resolved</th>
+                      <th className="py-1.5 pr-3 font-medium">Path · confidence</th>
+                      <th className="py-1.5 pr-3 font-medium">Shown (confirmed)</th>
+                      <th className="py-1.5 pr-3 font-medium">Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.facebookDiagnostics.map((d) => (
+                      <tr key={d.videoId} className="border-b border-border/60 align-top">
+                        <td className="max-w-[220px] py-2 pr-3">
+                          <div className="truncate font-medium">{d.title ?? d.urlSlug}</div>
+                          <div className="truncate font-mono text-[10px] text-muted-strong">{d.urlSlug}</div>
+                        </td>
+                        <td className="tabular py-2 pr-3">
+                          {d.resolvedViews !== null ? d.resolvedViews.toLocaleString("en-US") : "—"}
+                          {d.rawDisplayValue && (
+                            <div className="text-[10px] text-muted-strong">raw: {d.rawDisplayValue}</div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-[10px] text-muted">
+                          {d.extractionPath ?? "—"}
+                          <div
+                            className={
+                              d.viewConfidence === "exact" || d.viewConfidence === "display_string"
+                                ? "text-positive"
+                                : d.viewConfidence === "proxy"
+                                  ? "text-warning"
+                                  : "text-muted-strong"
+                            }
+                          >
+                            {d.viewConfidence} · {d.sourceSurface}
+                          </div>
+                        </td>
+                        <td className="tabular py-2 pr-3">
+                          {d.confirmedViews !== null ? d.confirmedViews.toLocaleString("en-US") : "—"}
+                        </td>
+                        <td className="py-2 pr-3 text-[10px]">
+                          {d.manualVerified && <span className="text-positive">verified </span>}
+                          {d.stale && <span className="text-warning">stale </span>}
+                          {d.monotonicPreserved && <span className="text-muted">preserved </span>}
+                          {!d.hasThumbnail && <span className="text-negative">no-thumb </span>}
+                          {d.duplicateCandidateIds.length > 0 && (
+                            <span className="text-negative">dupe×{d.duplicateCandidateIds.length} </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </CardBody>
           </Card>
         </section>

@@ -34,6 +34,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!views.ok || !likes.ok || !comments.ok || !shares.ok || !saves.ok) {
     return badRequest("Metric values must be non-negative numbers (or empty)");
   }
+  const reason = asTrimmedString(body.reason);
+  if (!reason) return badRequest("A reason is required for a manual correction");
   if (
     views.value === null && likes.value === null && comments.value === null &&
     shares.value === null && saves.value === null
@@ -59,7 +61,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       capturedAt: asIsoDate(body.capturedAt) ?? new Date().toISOString(),
       ...metrics,
       engagementRate: engagementRate(metrics),
-      rawJson: { manual: true },
+      // `pinned` = a durable correction (never expires); bypasses monotonic on
+      // write so a higher verified count can correct a low automated value, and
+      // lower automated values are then rejected by monotonic protection.
+      rawJson: { manual: true, pinned: true },
     });
     await store.updateVideo(videoId, { lastRefreshedAt: snapshot.capturedAt });
     await store.addOverride({
@@ -68,7 +73,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       field: "manual_snapshot",
       oldValue: null,
       newValue: JSON.stringify(metrics),
-      reason: asTrimmedString(body.reason) ?? "Manual snapshot via admin",
+      reason,
     });
     return NextResponse.json({ ok: true, snapshot });
   } catch (e) {

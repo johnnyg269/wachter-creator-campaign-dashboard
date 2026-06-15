@@ -59,6 +59,7 @@ export function ContentManager({
   const [busy, setBusy] = useState(false);
   const [snapVideo, setSnapVideo] = useState("");
   const [snap, setSnap] = useState({ views: "", likes: "", comments: "", shares: "", saves: "" });
+  const [snapReason, setSnapReason] = useState("");
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
 
@@ -404,21 +405,41 @@ export function ContentManager({
               />
             </div>
           ))}
+          <div className="min-w-[220px] flex-1">
+            <label className="mb-1 block text-muted" htmlFor="snap-reason">Reason (required)</label>
+            <input
+              id="snap-reason"
+              value={snapReason}
+              onChange={(e) => setSnapReason(e.target.value)}
+              className="w-full rounded-lg border border-border bg-surface px-2 py-1.5"
+              placeholder="e.g. corrected FB Reel to public play count (124K)"
+            />
+          </div>
           <button
-            disabled={busy || !snapVideo}
+            disabled={busy || !snapVideo || !snapReason.trim()}
             onClick={() =>
               run(
-                () => postJson("/api/admin/snapshots", "POST", { videoId: snapVideo, ...snap }),
+                () =>
+                  postJson("/api/admin/snapshots", "POST", {
+                    videoId: snapVideo,
+                    ...snap,
+                    reason: snapReason.trim(),
+                  }),
                 "Snapshot recorded",
-              ).then(() => setSnap({ views: "", likes: "", comments: "", shares: "", saves: "" }))
+              ).then(() => {
+                setSnap({ views: "", likes: "", comments: "", shares: "", saves: "" });
+                setSnapReason("");
+              })
             }
             className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white disabled:opacity-50"
           >
-            Record snapshot
+            Record correction
           </button>
           <p className="w-full text-[10px] text-muted-strong">
             Leave fields empty for metrics the platform doesn&apos;t expose — empty is stored as
-            Unavailable, not zero.
+            Unavailable, not zero. A correction is durable (it won&apos;t revert to a lower
+            automated value) and is audit-logged. Use it to set a Facebook Reel&apos;s real public
+            play count when the source undercounts.
           </p>
         </CardBody>
       </Card>

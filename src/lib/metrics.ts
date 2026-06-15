@@ -219,6 +219,16 @@ export interface VideoMetrics {
 function isManualSnapshot(s: MetricSnapshot): boolean {
   return Boolean(s.rawJson && typeof s.rawJson === "object" && (s.rawJson as { manual?: boolean }).manual);
 }
+/**
+ * Pinned manual snapshots are deliberate admin CORRECTIONS (e.g. a Facebook
+ * Reel's real public play count, which the actor undercounts). Unlike a
+ * 24h spot-check, a correction must persist — it should not silently revert to
+ * the known-wrong automated value after a day. Monotonic protection still lets
+ * automated tracking resume once it genuinely exceeds the corrected value.
+ */
+function isPinnedSnapshot(s: MetricSnapshot): boolean {
+  return Boolean(s.rawJson && typeof s.rawJson === "object" && (s.rawJson as { pinned?: boolean }).pinned);
+}
 
 const MANUAL_OVERRIDE_TTL_MS = 24 * HOUR_MS;
 
@@ -231,9 +241,14 @@ function lastConfirmed(
     const v = sorted[i][field];
     if (v === null) continue;
     const manual = isManualSnapshot(sorted[i]);
-    // Manual verifications expire after 24h — fall through to the newest
-    // automated value rather than displaying a day-old human-entered number.
-    if (manual && now.getTime() - new Date(sorted[i].capturedAt).getTime() > MANUAL_OVERRIDE_TTL_MS) {
+    // Non-pinned manual verifications expire after 24h — fall through to the
+    // newest automated value rather than displaying a day-old spot-check.
+    // Pinned corrections never expire (admin asserts ground truth).
+    if (
+      manual &&
+      !isPinnedSnapshot(sorted[i]) &&
+      now.getTime() - new Date(sorted[i].capturedAt).getTime() > MANUAL_OVERRIDE_TTL_MS
+    ) {
       continue;
     }
     return { value: v, at: sorted[i].capturedAt, stale: i < sorted.length - 1, manual };
