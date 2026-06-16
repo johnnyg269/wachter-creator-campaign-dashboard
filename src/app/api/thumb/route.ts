@@ -19,17 +19,18 @@ const BROWSER_SAFE = /^image\/(jpeg|png|webp|gif|avif|svg\+xml)\b/i;
 async function toBrowserSafe(
   buf: Buffer,
   contentType: string,
-): Promise<{ buf: Buffer; type: string } | null> {
+): Promise<{ buf: Buffer; type: string } | { error: string }> {
   if (BROWSER_SAFE.test(contentType)) return { buf, type: contentType };
-  // Non-web-safe (e.g. HEIC/HEIF/TIFF): transcode to JPEG. sharp is loaded as a
-  // native external; if it's unavailable or the decode fails, signal a miss so
-  // the caller returns 404 and the UI keeps its last-known-good thumbnail.
+  // Non-web-safe (e.g. HEIC/HEIF/TIFF): transcode to JPEG. sharp is a declared
+  // dependency; if it's unavailable or the decode fails, signal a miss so the
+  // caller returns 404 and the UI keeps its last-known-good thumbnail. The short
+  // error string surfaces (decode-vs-load) in a non-secret diagnostic header.
   try {
     const sharp = (await import("sharp")).default;
     const out = await sharp(buf).rotate().jpeg({ quality: 82 }).toBuffer();
     return { buf: out, type: "image/jpeg" };
-  } catch {
-    return null;
+  } catch (e) {
+    return { error: e instanceof Error ? e.message.slice(0, 80) : "transcode failed" };
   }
 }
 
@@ -54,8 +55,11 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       return NextResponse.json({ ok: false, error: "Image too large" }, { status: 404 });
     }
     const safe = await toBrowserSafe(raw, type);
-    if (!safe) {
-      return NextResponse.json({ ok: false, error: "Unrenderable image" }, { status: 404 });
+    if ("error" in safe) {
+      return NextResponse.json(
+        { ok: false, error: "Unrenderable image" },
+        { status: 404, headers: { "x-thumb-transcode": safe.error } },
+      );
     }
     return new Response(new Uint8Array(safe.buf), {
       headers: {
