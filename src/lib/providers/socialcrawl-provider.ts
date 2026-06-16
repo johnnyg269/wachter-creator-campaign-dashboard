@@ -28,7 +28,25 @@ interface ScPost {
   id?: string;
   url?: string;
   permalink?: string;
-  content?: { text?: string; thumbnail_url?: string };
+  content?: {
+    text?: string;
+    // Thumbnail/cover fields vary by platform/endpoint; pickThumbnail() tries
+    // them in order. media_urls is the VIDEO file — never a thumbnail.
+    thumbnail_url?: string;
+    thumbnailUrl?: string;
+    cover?: string;
+    cover_url?: string;
+    coverUrl?: string;
+    image?: string;
+    image_url?: string;
+    media_urls?: string | string[];
+  };
+  cover?: string;
+  cover_url?: string;
+  coverUrl?: string;
+  image?: string;
+  image_url?: string;
+  video?: { cover?: string; cover_url?: string; coverUrl?: string; dynamic_cover?: string };
   engagement?: { views?: number; likes?: number; comments?: number; shares?: number; saves?: number };
   // SocialCrawl sends published_at as a Unix-SECONDS NUMBER (e.g. 1781569866),
   // and created_at is typically absent — hence `string | number`. The raw value
@@ -64,6 +82,38 @@ export interface ScCall {
 
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
+}
+
+const VIDEO_FILE = /\.(mp4|m3u8|webm|mov|m4v)(\?|$)/i;
+const BAD_THUMB = /placeholder|default[_-]?avatar|no[_-]?image|blank\.|spacer\./i;
+
+/** A usable thumbnail is an https IMAGE URL — never the video file, a placeholder,
+ *  an empty string, or a non-URL. (HEIC is allowed: the /api/thumb proxy
+ *  transcodes it to browser-safe JPEG; the value itself is a real cover.) */
+function usableThumb(u: unknown, videoUrl: string | null): u is string {
+  if (typeof u !== "string") return false;
+  const s = u.trim();
+  if (!s || !/^https?:\/\//i.test(s)) return false;
+  if (videoUrl && s === videoUrl) return false;
+  if (VIDEO_FILE.test(s)) return false;
+  if (BAD_THUMB.test(s)) return false;
+  return true;
+}
+
+/** Pick the best real thumbnail/cover from a SocialCrawl post across the field
+ *  variants the API uses; returns null when none is usable (so the refresh
+ *  update path keeps the last-known-good thumbnail rather than clobbering it). */
+function pickThumbnail(post: ScPost): string | null {
+  const c = post.content ?? {};
+  const mv = c.media_urls;
+  const videoUrl = typeof mv === "string" ? mv : Array.isArray(mv) ? (mv[0] ?? null) : null;
+  const candidates: unknown[] = [
+    c.thumbnail_url, c.thumbnailUrl, c.cover, c.cover_url, c.coverUrl, c.image, c.image_url,
+    post.cover, post.cover_url, post.coverUrl, post.image, post.image_url,
+    post.video?.cover, post.video?.cover_url, post.video?.coverUrl, post.video?.dynamic_cover,
+  ];
+  for (const cand of candidates) if (usableThumb(cand, videoUrl)) return cand;
+  return null;
 }
 
 /** Encode credit usage into the attempt log without a schema change. */
@@ -140,7 +190,7 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
       externalVideoId: parsed?.externalVideoId ?? post.id ?? null,
       title: typeof post.content?.text === "string" ? post.content.text.slice(0, 80) : null,
       caption: post.content?.text ?? null,
-      thumbnailUrl: post.content?.thumbnail_url ?? null,
+      thumbnailUrl: pickThumbnail(post),
       // SocialCrawl published_at is Unix SECONDS — parse robustly (sec/ms/ISO →
       // ISO, invalid → null) so it never becomes a "Jan 1970" date.
       publishedAt:

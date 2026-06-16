@@ -109,20 +109,6 @@ function Dropdown<T extends string>({
 
 // ── Slide primitives (rendered at 1280×720 design size) ─────────────────────
 
-function ConfidenceChip({ level, label }: { level: "high" | "partial" | "building"; label: string }) {
-  const color =
-    level === "high" ? "var(--positive)" : level === "partial" ? "var(--warning)" : "var(--muted-strong)";
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium"
-      style={{ borderColor: "var(--border-strong)", color }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
-  );
-}
-
 function SlideFrame({
   data,
   title,
@@ -136,7 +122,7 @@ function SlideFrame({
   filtersSummary: string;
   children: React.ReactNode;
 }) {
-  const { meta, confidence } = data;
+  const { meta } = data;
   return (
     <div className="flex h-full w-full flex-col px-14 py-10" style={{ color: "var(--foreground)" }}>
       {/* Header */}
@@ -159,7 +145,6 @@ function SlideFrame({
           <p className="mt-2 text-[14px] text-muted">{subtitle}</p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2 text-right">
-          <ConfidenceChip level={confidence.level} label={confidence.headline} />
           <div className="text-[12px] text-muted">
             {meta.rangeLabel}
             {meta.dateFrom && (
@@ -272,24 +257,32 @@ function PlatformContribution({
     byGrowth ? (r.totalGrowth ?? 0) : (r.totalViews ?? 0);
   const total = byGrowth ? totalGrowth : totalViews;
   const sorted = [...rolls].filter((r) => valueOf(r) > 0).sort((a, b) => valueOf(b) - valueOf(a));
-
+  // Compact, bounded card (no greedy flex-1) so the slide never overflows and
+  // the legend can't push the row below into the canvas edge. Legend is a
+  // single ranked column with column-aligned value/percent — screenshot-ready.
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-2xl border px-7 py-6" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-      <div className="flex items-baseline justify-between">
+    <div
+      className="shrink-0 rounded-2xl border px-7 py-4"
+      style={{ borderColor: "var(--border)", background: "var(--surface)" }}
+    >
+      <div className="flex items-baseline justify-between gap-4">
         <div className="text-[14px] font-semibold tracking-tight">
           {byGrowth ? "Growth by platform" : "Platform contribution"}
         </div>
-        <div className="text-[12px] text-muted">
+        <div className="shrink-0 text-[12px] text-muted">
           {byGrowth ? `+${formatCompact(total)} views gained · ${rangeLabel}` : `${formatCompact(total)} total views`}
         </div>
       </div>
       {total <= 0 || sorted.length === 0 ? (
-        <div className="mt-5 flex flex-1 items-center text-[14px] text-muted">
+        <div className="mt-4 text-[14px] text-muted">
           No confirmed {byGrowth ? "growth" : "view"} data to break down yet.
         </div>
       ) : (
         <>
-          <div className="mt-5 flex h-9 w-full overflow-hidden rounded-full" style={{ background: "var(--surface-hover)" }}>
+          <div
+            className="mt-3 flex h-7 w-full overflow-hidden rounded-full"
+            style={{ background: "var(--surface-hover)" }}
+          >
             {sorted.map((r) => (
               <div
                 key={r.platform}
@@ -298,18 +291,20 @@ function PlatformContribution({
               />
             ))}
           </div>
-          <div className="mt-6 grid flex-1 grid-cols-2 content-center gap-x-10 gap-y-4">
+          {/* Ranked legend: name (flex) · views gained · % — fixed-width numeric
+              columns keep everything aligned even as values grow. */}
+          <div className="mt-3 flex flex-col gap-2">
             {sorted.map((r) => (
-              <div key={r.platform} className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-2.5 text-[15px] font-medium">
-                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: PLATFORM_HEX[r.platform] }} />
+              <div key={r.platform} className="flex items-center gap-3 text-[14px]">
+                <span className="flex min-w-0 flex-1 items-center gap-2.5 font-medium">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: PLATFORM_HEX[r.platform] }} />
                   <span className="truncate">{PLATFORM_LABELS[r.platform]}</span>
                 </span>
-                <span className="tabular shrink-0 text-right text-[15px]">
-                  <span className="font-semibold">
-                    {byGrowth ? `+${formatCompact(r.totalGrowth)}` : formatCompact(r.totalViews)}
-                  </span>
-                  <span className="ml-2 text-muted-strong">{formatPct(valueOf(r) / total)}</span>
+                <span className="tabular w-24 shrink-0 text-right font-semibold">
+                  {byGrowth ? `+${formatCompact(r.totalGrowth)}` : formatCompact(r.totalViews)}
+                </span>
+                <span className="tabular w-14 shrink-0 text-right text-muted-strong">
+                  {formatPct(valueOf(r) / total)}
                 </span>
               </div>
             ))}
@@ -330,8 +325,12 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
   const topPlatform = [...platRolls].sort((a, b) => (b.totalViews ?? -1) - (a.totalViews ?? -1))[0];
   const totalPlatViews = sumReal(platRolls.map((r) => r.totalViews)) ?? 0;
   const bestConcept = [...concepts].sort((a, b) => (b.totalViews ?? -1) - (a.totalViews ?? -1))[0] ?? null;
-  const themeTopPlatform = bestConcept ? bestPlatformForConcept(vids, bestConcept.id) : null;
   const gained = roll.totalGrowth;
+  // Top growth driver (replaces the old operational content-theme card): the
+  // platform contributing the most growth + the single best-performing video.
+  const totalGrowthAll = sumReal(platRolls.map((r) => r.totalGrowth)) ?? 0;
+  const growthLeader = [...platRolls].sort((a, b) => (b.totalGrowth ?? -1) - (a.totalGrowth ?? -1))[0] ?? null;
+  const topVideo = rankVideos(vids, "views")[0] ?? null;
   // Campaign-momentum sparkline: real confirmed-view readings only (no fakes).
   const trendPoints = data.overallTrend.map((p) => p.views).filter((v): v is number => v !== null);
 
@@ -361,7 +360,7 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
   const showMilestone = keyMilestone?.severity === "major";
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="flex h-full flex-col gap-2.5">
       {showMilestone && keyMilestone && (
         <div
           className="flex items-center gap-2.5 rounded-lg border px-4 py-2"
@@ -393,7 +392,7 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
       {/* Dominant visual: platform contribution by selected-period growth */}
       <PlatformContribution rolls={platRolls} rangeLabel={data.meta.rangeLabel} />
 
-      {/* Campaign-level row: momentum · engagement quality · leading theme */}
+      {/* Campaign-level row: momentum · engagement quality · top growth driver */}
       <div className="grid grid-cols-3 gap-4">
         {/* Campaign momentum */}
         <div className="flex flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
@@ -425,21 +424,42 @@ function ExecutiveSlide({ data, f }: { data: ReportsData; f: ReportFilters }) {
           </div>
         </div>
 
-        {/* Leading content theme (secondary supporting insight) */}
+        {/* Top growth driver — what's actually moving the numbers */}
         <div className="flex flex-col rounded-2xl border px-5 py-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-          <div className="text-[12px] font-semibold uppercase tracking-wide text-muted">Leading theme</div>
-          {bestConcept ? (
+          <div className="text-[12px] font-semibold uppercase tracking-wide text-muted">Top growth driver</div>
+          {growthLeader && (growthLeader.totalGrowth ?? 0) > 0 ? (
             <>
-              <div className="mt-2 truncate text-[16px] font-semibold">{bestConcept.name}</div>
-              <div className="tabular mt-auto pt-2 text-[12px] text-muted-strong">
-                {formatCompact(bestConcept.totalViews)} views · {formatNumber(bestConcept.count)} videos
-                {themeTopPlatform ? ` · ${PLATFORM_LABELS[themeTopPlatform].split(" ")[0]}` : ""}
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-[18px] font-semibold leading-none">
+                  {PLATFORM_LABELS[growthLeader.platform].split(" ")[0]}
+                </span>
+                <span className="tabular text-[13px] font-semibold text-positive">
+                  +{formatCompact(growthLeader.totalGrowth)}
+                </span>
+                {totalGrowthAll > 0 && (
+                  <span className="text-[11px] text-muted-strong">
+                    {formatPct((growthLeader.totalGrowth ?? 0) / totalGrowthAll)} of growth
+                  </span>
+                )}
               </div>
+              {topVideo && (
+                <div className="mt-auto pt-2 text-[12px] text-muted-strong">
+                  <span className="text-muted">Top video</span>{" "}
+                  <span className="text-foreground/90">{(topVideo.title ?? "Untitled").slice(0, 36)}</span>
+                  {" · "}
+                  {formatCompact(topVideo.views)} views
+                </div>
+              )}
             </>
           ) : (
-            <div className="mt-2 text-[13px] text-muted">No concept data yet</div>
+            <div className="mt-2 text-[13px] text-muted">Growth data still accruing</div>
           )}
         </div>
+      </div>
+
+      {/* Methodology footnote — board-relevant: explains the Facebook figure. */}
+      <div className="text-[10px] leading-relaxed text-muted-strong">
+        Figures are confirmed last-known-good values · Facebook reflects public Reel plays.
       </div>
     </div>
   );

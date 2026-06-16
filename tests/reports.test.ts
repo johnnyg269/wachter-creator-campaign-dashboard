@@ -301,7 +301,11 @@ describe("Executive Summary is board-level, not operational", () => {
     expect(studio).toContain("Growth by platform"); // share of selected-period growth
     expect(studio).toContain("Campaign momentum");
     expect(studio).toContain("Engagement quality");
-    expect(studio).toContain("Leading theme");
+    // The operational content-theme card was replaced by an exec growth driver,
+    // and the internal "confidence" pill was removed from the report header.
+    expect(studio).toContain("Top growth driver");
+    expect(studio).not.toMatch(/Leading theme/i);
+    expect(studio).not.toContain("ConfidenceChip");
   });
 
   it("platform contribution uses real selected-period growth (falls back to views)", () => {

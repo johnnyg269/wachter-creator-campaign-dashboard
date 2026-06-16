@@ -11,6 +11,28 @@ export const dynamic = "force-dynamic";
 const MAX_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 8000;
 
+// Formats browsers render natively — passed through untouched. Anything else
+// (notably image/heic, which TikTok serves for thumbnails) is transcoded to JPEG
+// via sharp so the <img> can display it instead of falling back to a placeholder.
+const BROWSER_SAFE = /^image\/(jpeg|png|webp|gif|avif|svg\+xml)\b/i;
+
+async function toBrowserSafe(
+  buf: Buffer,
+  contentType: string,
+): Promise<{ buf: Buffer; type: string } | null> {
+  if (BROWSER_SAFE.test(contentType)) return { buf, type: contentType };
+  // Non-web-safe (e.g. HEIC/HEIF/TIFF): transcode to JPEG. sharp is loaded as a
+  // native external; if it's unavailable or the decode fails, signal a miss so
+  // the caller returns 404 and the UI keeps its last-known-good thumbnail.
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(buf).rotate().jpeg({ quality: 82 }).toBuffer();
+    return { buf: out, type: "image/jpeg" };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest): Promise<NextResponse | Response> {
   const src = req.nextUrl.searchParams.get("src");
   if (!src || !isAllowedThumbHost(src)) {
@@ -27,13 +49,17 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     if (!upstream.ok || !type.startsWith("image/")) {
       return NextResponse.json({ ok: false, error: `Upstream ${upstream.status}` }, { status: 404 });
     }
-    const buf = await upstream.arrayBuffer();
-    if (buf.byteLength > MAX_BYTES) {
+    const raw = Buffer.from(await upstream.arrayBuffer());
+    if (raw.byteLength > MAX_BYTES) {
       return NextResponse.json({ ok: false, error: "Image too large" }, { status: 404 });
     }
-    return new Response(buf, {
+    const safe = await toBrowserSafe(raw, type);
+    if (!safe) {
+      return NextResponse.json({ ok: false, error: "Unrenderable image" }, { status: 404 });
+    }
+    return new Response(new Uint8Array(safe.buf), {
       headers: {
-        "Content-Type": type,
+        "Content-Type": safe.type,
         // CDN URLs are signed/rotating; cache the bytes for an hour at the
         // edge and let stale copies serve while revalidating.
         "Cache-Control": "public, max-age=900, s-maxage=3600, stale-while-revalidate=86400",

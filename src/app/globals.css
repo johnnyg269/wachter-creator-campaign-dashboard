@@ -625,7 +625,12 @@ body {
   animation: t-badge-slide-in var(--badge-slide-dur) var(--badge-slide-ease);
 }
 .t-badge-dot {
-  display: block;
+  /* inline-flex + center so the digit(s) are centered vertically AND
+     horizontally in the pill at 1, 2, or "99+" — a bare `display:block` here
+     overrode the component's flex utilities and pushed the text to the top. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transform-origin: center;
   transform: scale(1);
   opacity: 1;
