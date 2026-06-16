@@ -19,6 +19,9 @@ export interface RefreshPolicyConfig {
   fullIntervalMin: number;
   lightIntervalMin: number;
   discoveryIntervalMin: number;
+  /** How far back (hours) a discovery run auto-adds new campaign posts; older
+   *  eligible posts go to the admin review queue. */
+  discoveryLookbackHours: number;
   commentsIntervalMin: number;
   /** Full comment-detail (text) pull cadence — kept for the admin display. */
   commentDetailIntervalHours: number;
@@ -88,7 +91,14 @@ export function getRefreshPolicyConfig(): RefreshPolicyConfig {
       envInt("REFRESH_FULL_INTERVAL_MINUTES", scOn ? 15 : 60),
     ),
     lightIntervalMin: envInt("REFRESH_LIGHT_INTERVAL_MINUTES", 30),
-    discoveryIntervalMin: envInt("REFRESH_DISCOVERY_INTERVAL_MINUTES", 720),
+    // Discovery (finding NEW campaign posts) runs every DISCOVERY_REFRESH_INTERVAL_HOURS
+    // active hours — default 2h during launch so last-night/today posts appear
+    // quickly. Legacy REFRESH_DISCOVERY_INTERVAL_MINUTES still overrides if set.
+    discoveryIntervalMin: envInt(
+      "REFRESH_DISCOVERY_INTERVAL_MINUTES",
+      envInt("DISCOVERY_REFRESH_INTERVAL_HOURS", 2) * 60,
+    ),
+    discoveryLookbackHours: envInt("DISCOVERY_LOOKBACK_HOURS", 72),
     commentsIntervalMin: envInt("REFRESH_COMMENTS_INTERVAL_MINUTES", commentDetailIntervalHours * 60),
     commentDetailIntervalHours,
     commentDetailHour: commentDetailWindows[0] ?? 12,

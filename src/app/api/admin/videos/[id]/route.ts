@@ -5,6 +5,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getStore } from "@/lib/store";
 import type { Video, VideoStatus } from "@/lib/types";
+import { isReviewCandidate } from "@/lib/eligibility";
 import {
   asTrimmedString,
   badRequest,
@@ -89,6 +90,30 @@ export async function PATCH(
           newValue: String(body.hidden),
         });
       }
+    }
+
+    // Discovery review queue: promote a "Possible new content" candidate into the
+    // campaign (un-hide + clear the review flag so it counts) or dismiss it
+    // (keep hidden, clear the flag so it leaves the queue). Quarantine via hidden
+    // above still applies independently.
+    if ("review" in body && isReviewCandidate(video)) {
+      const action = body.review;
+      if (action !== "promote" && action !== "dismiss") {
+        return badRequest('review must be "promote" or "dismiss"');
+      }
+      const rawObj =
+        video.rawJson && typeof video.rawJson === "object"
+          ? { ...(video.rawJson as Record<string, unknown>) }
+          : {};
+      delete rawObj.discoveryReview;
+      delete rawObj.discoveryReviewReason;
+      patch.rawJson = rawObj as Video["rawJson"];
+      patch.hidden = action === "promote" ? false : true;
+      changes.push({
+        field: "discovery_review",
+        oldValue: "pending",
+        newValue: action === "promote" ? "added_to_campaign" : "dismissed",
+      });
     }
 
     if ("status" in body) {

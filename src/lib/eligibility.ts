@@ -120,3 +120,62 @@ export function isCampaignEligible(
 ): boolean {
   return ineligibilityReason(v, startMs, unassignedEpisodeId) === null;
 }
+
+// ── Discovery: should a NEW (unmatched) profile-feed candidate be auto-added,
+//    sent to the admin "Possible new content" review queue, or ignored? ───────
+
+export type DiscoveryDecision =
+  | { decision: "add" }
+  | { decision: "review"; reason: string }
+  | { decision: "ignore"; reason: IneligibilityReason | "no_stable_id" };
+
+const DEFAULT_DISCOVERY_LOOKBACK_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Classify a brand-new (not-yet-tracked) candidate returned by a known campaign
+ * profile endpoint:
+ *  - ignore  → fails base eligibility (invalid/epoch date, before campaign start,
+ *              unsupported platform, no canonical URL).
+ *  - add     → eligible, has a stable id, AND published within the lookback
+ *              window (recent → confidently this campaign's new post).
+ *  - review  → eligible but uncertain (no stable id, or older than the lookback
+ *              window) → admin "Possible new content", never auto-counted.
+ * Dedup against already-tracked videos is the caller's job (only unmatched items
+ * should reach here).
+ */
+export function classifyDiscoveryCandidate(
+  v: {
+    platform: Platform;
+    originalUrl: string | null;
+    externalVideoId: string | null;
+    publishedAt: string | null;
+  },
+  opts: { startMs?: number; lookbackMs?: number; now?: number } = {},
+): DiscoveryDecision {
+  const startMs = opts.startMs ?? campaignStartMs();
+  const lookbackMs = opts.lookbackMs ?? DEFAULT_DISCOVERY_LOOKBACK_MS;
+  const now = opts.now ?? Date.now();
+
+  const reason = ineligibilityReason(
+    { platform: v.platform, originalUrl: v.originalUrl, publishedAt: v.publishedAt, isSeed: false, episodeGroupId: null },
+    startMs,
+    null,
+  );
+  if (reason) return { decision: "ignore", reason };
+
+  // A stable platform id is required to dedupe a future auto-add reliably.
+  if (!v.externalVideoId) return { decision: "review", reason: "no_stable_id" };
+
+  const t = Date.parse(v.publishedAt as string); // valid — base eligibility passed
+  if (t >= now - lookbackMs) return { decision: "add" };
+  return { decision: "review", reason: "older_than_discovery_window" };
+}
+
+/** A persisted candidate awaiting admin approval (rawJson.discoveryReview flag).
+ *  Excluded from every public total/list until an admin promotes it. */
+export function isReviewCandidate(v: { rawJson?: unknown }): boolean {
+  const raw = v.rawJson;
+  return Boolean(
+    raw && typeof raw === "object" && (raw as { discoveryReview?: unknown }).discoveryReview === true,
+  );
+}

@@ -4,11 +4,13 @@
 // additionally blocks overlaps and too-frequent manual runs.
 
 import { type NextRequest, NextResponse } from "next/server";
-import { runRefresh } from "@/lib/refresh";
+import { runRefresh, type RefreshModeName } from "@/lib/refresh";
 import { checkAdminRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+const MODES: RefreshModeName[] = ["metrics", "discovery", "full"];
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const denied = checkAdminRequest(req);
@@ -19,14 +21,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
   let force = false;
+  let mode: RefreshModeName | undefined;
   try {
-    const body = (await req.json()) as { force?: boolean } | null;
+    const body = (await req.json()) as { force?: boolean; mode?: string } | null;
     force = body?.force === true;
+    if (body?.mode && MODES.includes(body.mode as RefreshModeName)) {
+      mode = body.mode as RefreshModeName;
+    }
   } catch {
-    // no body — plain manual refresh
+    // no body — plain manual refresh (defaults to full: metrics + discovery)
   }
   try {
-    const report = await runRefresh("manual", { force });
+    const report = await runRefresh("manual", { force, mode });
     return NextResponse.json({ ok: true, report });
   } catch (e) {
     return NextResponse.json(

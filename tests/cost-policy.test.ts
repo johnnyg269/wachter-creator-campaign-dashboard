@@ -27,6 +27,7 @@ const CFG: RefreshPolicyConfig = {
   fullIntervalMin: 60,
   lightIntervalMin: 30,
   discoveryIntervalMin: 720,
+  discoveryLookbackHours: 72,
   commentsIntervalMin: 1440,
   commentDetailIntervalHours: 24,
   commentDetailHour: 9,
@@ -376,7 +377,8 @@ describe("pipeline wiring (source-level)", () => {
   it("env knobs exist with safe defaults", () => {
     const cfg = getRefreshPolicyConfig();
     expect(cfg.fullIntervalMin).toBe(60);
-    expect(cfg.discoveryIntervalMin).toBe(720); // twice a day
+    expect(cfg.discoveryIntervalMin).toBe(120); // every 2 active hours (launch cadence)
+    expect(cfg.discoveryLookbackHours).toBe(72); // auto-add window
     expect(cfg.commentsIntervalMin).toBe(1440); // once a day
     expect(cfg.commentDetailIntervalHours).toBe(24);
     expect(cfg.commentDetailHour).toBe(12); // first comment-detail window (12:00 ET)

@@ -125,8 +125,10 @@ describe("public Episodes page is read-only and database-backed", () => {
 describe("auto-assignment never overwrites manual assignment", () => {
   it("the refresh update path never patches episodeGroupId on existing videos", () => {
     const refresh = read("src/lib/refresh.ts");
+    // The existing-video UPDATE path lives in upsertFetchedVideo, between its
+    // signature and the create branch (the "Strict campaign-inclusion gate").
     const updateBlock = refresh.slice(
-      refresh.indexOf("if (existing) {"),
+      refresh.indexOf("async function upsertFetchedVideo"),
       refresh.indexOf("// Strict campaign-inclusion gate"),
     );
     expect(updateBlock).not.toContain("episodeGroupId");

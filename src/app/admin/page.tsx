@@ -19,12 +19,15 @@ import { ContentManager } from "./content-manager";
 import { RefreshHealthPanel } from "./refresh-health";
 import { EpisodeManager } from "./episode-manager";
 import { ReviewQueue } from "./review-queue";
+import { DiscoveryControls } from "./discovery-controls";
+import { ReviewCandidates } from "./review-candidates";
 
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
+  { id: "discovery", label: "Discovery" },
   { id: "providers", label: "Metrics Providers" },
   { id: "youtube", label: "YouTube Provider" },
   { id: "facebook", label: "Facebook Views" },
@@ -223,6 +226,61 @@ export default async function AdminPage() {
 
         <section id="automation">
           <RefreshHealthPanel runs={data.refreshRuns} />
+        </section>
+
+        <section id="discovery">
+          <Card>
+            <CardHeader
+              title="Discovery"
+              subtitle="Finds NEW campaign videos on the known creator profiles. Runs automatically every 2 active hours; recent eligible posts are auto-added, older/uncertain ones wait in Possible new content. Metrics refresh (every 15 min) updates tracked videos only and never imports."
+            />
+            <CardBody className="space-y-6">
+              <DiscoveryControls />
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Cadence</div>
+                  <div>
+                    every {data.discovery.cadenceHours}h · {data.discovery.lookbackHours}h auto-add window
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Last discovery pull</div>
+                  <div>
+                    {data.discovery.lastPullAt ? <TimeAgo iso={data.discovery.lastPullAt} /> : "never"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Next discovery pull</div>
+                  <div>
+                    {formatDateTime(data.discovery.nextPullAt)}
+                    {data.discovery.quietHours ? " · after quiet hours" : ""}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Last run</div>
+                  <div className="tabular">
+                    {data.discovery.lastRun
+                      ? `added ${data.discovery.lastRun.added} · review ${data.discovery.lastRun.review} · ignored ${data.discovery.lastRun.ignored}`
+                      : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Pending review</div>
+                  <div className="tabular">{data.discovery.pendingReview}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">Enabled</div>
+                  <div>{data.discovery.enabled ? "yes" : "no"}</div>
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-muted">
+                  Possible new content
+                </div>
+                <ReviewCandidates items={data.reviewCandidates} />
+              </div>
+            </CardBody>
+          </Card>
         </section>
 
         <section id="providers">

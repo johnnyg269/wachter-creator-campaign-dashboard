@@ -20,7 +20,12 @@ import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
 import { ApifyProvider } from "./providers/apify-provider";
 import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
-import { campaignStartMs, isCampaignEligible, UNASSIGNED_EPISODE_NAME } from "./eligibility";
+import {
+  campaignStartMs,
+  classifyDiscoveryCandidate,
+  isCampaignEligible,
+  UNASSIGNED_EPISODE_NAME,
+} from "./eligibility";
 import { applyMonotonicViews, engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
@@ -119,9 +124,13 @@ export function evaluateRefreshGate(
  * database gate that covers cross-instance overlap) instead of hanging the
  * caller until the in-flight refresh finishes.
  */
+/** Admin manual-refresh lanes: metrics-only (no import), discovery (metrics +
+ *  find new posts), or full (metrics + discovery + comment detail). */
+export type RefreshModeName = "metrics" | "discovery" | "full";
+
 export function runRefresh(
   trigger: RefreshTrigger,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; mode?: RefreshModeName } = {},
 ): Promise<RefreshReport> {
   if (globalForRefresh.__wachterRefreshing) {
     const now = new Date().toISOString();
@@ -136,7 +145,7 @@ export function runRefresh(
     });
   }
   const effective: RefreshTrigger = opts.force && trigger === "manual" ? "force" : trigger;
-  const p = doRefresh(effective).finally(() => {
+  const p = doRefresh(effective, opts.mode).finally(() => {
     globalForRefresh.__wachterRefreshing = undefined;
   });
   globalForRefresh.__wachterRefreshing = p;
@@ -172,7 +181,10 @@ async function recordSkip(
   };
 }
 
-async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
+async function doRefresh(
+  trigger: RefreshTrigger,
+  modeOverride?: RefreshModeName,
+): Promise<RefreshReport> {
   const { getStore } = await import("./store");
   const store = getStore();
   const campaign = await ensureSeedData(store);
@@ -196,6 +208,15 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   // ── Cost-control policy (scheduled runs only): quiet hours, budget cap,
   // and tiered cadences. Manual/force/script bypass policy, never the lock.
   let mode: RunMode = { light: false, discovery: true, comments: true };
+  if (modeOverride && trigger !== "cron") {
+    // Admin chose an explicit lane (metrics / discovery / full).
+    mode =
+      modeOverride === "metrics"
+        ? { light: false, discovery: false, comments: false }
+        : modeOverride === "discovery"
+          ? { light: false, discovery: true, comments: false }
+          : { light: false, discovery: true, comments: true };
+  }
   if (trigger === "cron") {
     const cfg = getRefreshPolicyConfig();
     const attempts = await store.listCollectionAttempts(500);
@@ -402,6 +423,11 @@ async function refreshPlatform(
   //  - discovery off: drop the profile sweep where the direct-URL surface can
   //    cover metrics (TikTok/Instagram) — no new-post hunting. YouTube and
   //    Facebook keep their sweep because it is the metrics source itself.
+  //    EXCEPTION: SocialCrawl's profile endpoint IS its metrics source (there is
+  //    no cheap per-video surface), so it must always fetch the profile — the
+  //    metrics-vs-discovery distinction is whether unmatched items get added.
+  const profileIsMetricsSource =
+    provider.providerType === "socialcrawl" || platform === "youtube" || platform === "facebook";
   let targetVideos = videos;
   let targetProfile: typeof profile | null = profile;
   if (mode.light) {
@@ -420,7 +446,7 @@ async function refreshPlatform(
       return out;
     }
     log.push(`${platform}: light refresh targeting ${targetVideos.length} hot video(s)`);
-  } else if (!mode.discovery && platform !== "youtube" && platform !== "facebook") {
+  } else if (!mode.discovery && !profileIsMetricsSource) {
     targetProfile = null;
     log.push(`${platform}: discovery sweep skipped this cycle (not due)`);
   }
@@ -480,25 +506,22 @@ async function refreshPlatform(
     // Group fetched records by the tracked video they resolve to and merge —
     // one snapshot per video per refresh, never a views-less duplicate
     // clobbering a surface that did expose views.
-    // Tracked-only refresh: a provider profile sweep (SocialCrawl especially)
-    // returns the creator's WHOLE recent feed. We update metrics ONLY for videos
-    // already tracked AND eligible; every other feed item — the creator's other
-    // posts, old pre-campaign reels — is ignored, never auto-imported. This is
-    // the fix for the over-import that corrupted totals.
+    //
+    // METRICS lane (always): a provider profile sweep returns the creator's
+    // WHOLE recent feed; we update metrics ONLY for already-tracked, eligible
+    // videos. DISCOVERY lane (mode.discovery): unmatched items from the known
+    // campaign profile are classified — recent eligible posts are AUTO-ADDED,
+    // after-start-but-uncertain posts go to the admin review queue, and
+    // old/invalid/pre-campaign posts are ignored. Without discovery, unmatched
+    // items are simply ignored (never the over-import that corrupted totals).
     const eligibleTrackedIds = new Set(videos.map((v) => v.id));
+    const lookbackMs = getRefreshPolicyConfig().discoveryLookbackHours * 60 * 60 * 1000;
+    const nowMs = Date.now();
     let unmatchedIgnored = 0;
+    const disc = { added: 0, review: 0, ignored: 0, reasons: {} as Record<string, number> };
+    const seenNew = new Set<string>();
     const groups = new Map<string, { merged: NormalizedVideo; commentKeys: Set<string> }>();
-    for (const n of fetched.videos) {
-      const existing = await store.findVideoByUrlOrExternalId(
-        platform,
-        n.originalUrl,
-        n.externalVideoId,
-      );
-      if (!existing || !eligibleTrackedIds.has(existing.id)) {
-        unmatchedIgnored++;
-        continue;
-      }
-      const gkey = `v:${existing.id}`;
+    const addToGroup = (gkey: string, n: NormalizedVideo) => {
       const commentKey = n.externalVideoId ?? n.originalUrl ?? "";
       const group = groups.get(gkey);
       if (!group) {
@@ -510,10 +533,58 @@ async function refreshPlatform(
             : mergeNormalizedVideos(group.merged, n);
         group.commentKeys.add(commentKey);
       }
+    };
+    for (const n of fetched.videos) {
+      const existing = await store.findVideoByUrlOrExternalId(
+        platform,
+        n.originalUrl,
+        n.externalVideoId,
+      );
+      if (existing) {
+        // Tracked + eligible → metrics update; tracked-but-ineligible /
+        // quarantined / pending-review → skip (never re-add or re-count).
+        if (eligibleTrackedIds.has(existing.id)) addToGroup(`v:${existing.id}`, n);
+        else unmatchedIgnored++;
+        continue;
+      }
+      // Unmatched (not yet tracked).
+      if (!mode.discovery) {
+        unmatchedIgnored++; // metrics-only lane never imports
+        continue;
+      }
+      const key = n.externalVideoId ?? n.originalUrl ?? "";
+      if (key && seenNew.has(key)) continue;
+      if (key) seenNew.add(key);
+      const cls = classifyDiscoveryCandidate(
+        { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
+        { startMs, lookbackMs, now: nowMs },
+      );
+      if (cls.decision === "ignore") {
+        disc.ignored++;
+        disc.reasons[cls.reason] = (disc.reasons[cls.reason] ?? 0) + 1;
+      } else if (cls.decision === "add") {
+        const created = await insertDiscoveredVideo(store, campaign, platform, profile?.id ?? null, n, false);
+        disc.added++;
+        out.newVideosDiscovered++;
+        await emitNewVideoAlert(store, campaign, created);
+        addToGroup(`v:${created.id}`, n); // snapshot now so it counts immediately
+      } else {
+        // review: persisted hidden + flagged → never counted until an admin promotes it.
+        await insertDiscoveredVideo(store, campaign, platform, profile?.id ?? null, n, true, cls.reason);
+        disc.review++;
+        disc.reasons[cls.reason] = (disc.reasons[cls.reason] ?? 0) + 1;
+      }
+    }
+    if (mode.discovery) {
+      const reasons = Object.entries(disc.reasons).map(([k, v]) => `${k}=${v}`).join(",");
+      log.push(
+        `${platform}: discovery — added:${disc.added} review:${disc.review} ignored:${disc.ignored}` +
+          (reasons ? ` · ${reasons}` : ""),
+      );
     }
     if (unmatchedIgnored > 0) {
       log.push(
-        `${platform}: ignored ${unmatchedIgnored} unmatched profile item(s) — tracked-only refresh, not imported`,
+        `${platform}: ignored ${unmatchedIgnored} unmatched item(s) (tracked-only / not eligible)`,
       );
     }
 
@@ -660,6 +731,47 @@ async function refreshPlatform(
   }
 
   return out;
+}
+
+/**
+ * Insert a newly DISCOVERED campaign video. review=true persists it hidden +
+ * flagged (rawJson.discoveryReview) so it stays out of every public total until
+ * an admin promotes it from the "Possible new content" queue; review=false adds
+ * it as an active tracked video (counts immediately and gets a snapshot this run).
+ */
+async function insertDiscoveredVideo(
+  store: Store,
+  campaign: Campaign,
+  platform: Platform,
+  profileId: string | null,
+  n: NormalizedVideo,
+  review: boolean,
+  reviewReason?: string,
+): Promise<Video> {
+  const now = new Date().toISOString();
+  const rawObj = n.rawJson && typeof n.rawJson === "object" ? (n.rawJson as Record<string, unknown>) : {};
+  return store.insertVideo({
+    campaignId: campaign.id,
+    platform,
+    profileId,
+    originalUrl: n.originalUrl ?? `unknown:${n.externalVideoId}`,
+    externalVideoId: n.externalVideoId,
+    title: n.title,
+    caption: n.caption,
+    thumbnailUrl: n.thumbnailUrl,
+    publishedAt: n.publishedAt,
+    firstTrackedAt: now,
+    lastRefreshedAt: review ? null : now,
+    status: "active",
+    episodeGroupId: review ? null : await inferEpisodeGroup(store, platform, n),
+    sourceStatus: "live",
+    errorMessage: null,
+    hidden: review,
+    isSeed: false,
+    rawJson: review
+      ? { ...rawObj, discoveryReview: true, discoveryReviewReason: reviewReason ?? "review" }
+      : n.rawJson,
+  });
 }
 
 async function upsertFetchedVideo(

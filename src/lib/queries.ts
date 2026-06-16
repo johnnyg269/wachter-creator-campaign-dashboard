@@ -65,12 +65,19 @@ import {
   metricsProviderFor,
 } from "./config";
 import { computeMilestones, type Milestone, type MilestoneInput } from "./milestones";
-import { getRefreshPolicyConfig, socialcrawlCreditsToday } from "./refresh-policy";
+import {
+  decodeRunMode,
+  getRefreshPolicyConfig,
+  isQuietHours,
+  nextActiveTime,
+  socialcrawlCreditsToday,
+} from "./refresh-policy";
 import { resolveViews } from "./apify/view-resolver";
 import {
   campaignStartMs,
   ineligibilityReason,
   isCampaignEligible,
+  isReviewCandidate,
   INELIGIBILITY_LABELS,
   UNASSIGNED_EPISODE_NAME,
   type IneligibilityReason,
@@ -214,7 +221,9 @@ export async function loadCampaignData(includeHidden = false): Promise<CampaignD
   // dropped here, so every downstream total/list/chart/milestone — which all
   // derive from this video set — excludes them automatically.
   const videos = (await store.listVideos({ includeHidden }))
-    .filter((v) => isCampaignEligible(v, startMs, unassignedId))
+    // Eligible AND not a pending discovery-review candidate (those stay out of
+    // every public total until an admin promotes them from "Possible new content").
+    .filter((v) => isCampaignEligible(v, startMs, unassignedId) && !isReviewCandidate(v))
     .map((v) => ({
       ...v,
       rawJson: null,
@@ -988,6 +997,11 @@ export interface AdminPageData {
   /** Review queue: records excluded by the campaign-eligibility filter (not
    *  counted anywhere) — e.g. old profile-feed imports with epoch dates. */
   quarantinedVideos: QuarantinedVideoDiag[];
+  /** Discovery lane status (last/next pull, cadence, last-run candidate counts). */
+  discovery: DiscoveryStatus;
+  /** "Possible new content" — discovered-but-uncertain candidates pending an
+   *  admin decision; not counted in any total until promoted. */
+  reviewCandidates: QuarantinedVideoDiag[];
   /** SocialCrawl provider status + credit usage (admin-only, never the key). */
   socialcrawl: SocialcrawlAdminStatus;
   /** YouTube provider health — API vs Apify fallback (never the key value). */
@@ -1036,6 +1050,18 @@ export interface FacebookDiagnostic {
   lastRefreshedAt: string | null;
   /** Other tracked FB videos sharing this reel's id/canonical URL (dupes). */
   duplicateCandidateIds: string[];
+}
+
+export interface DiscoveryStatus {
+  enabled: boolean;
+  cadenceHours: number;
+  lookbackHours: number;
+  lastPullAt: string | null;
+  nextPullAt: string | null;
+  quietHours: boolean;
+  /** Candidate counts from the most recent discovery run (parsed from its log). */
+  lastRun: { at: string; added: number; review: number; ignored: number } | null;
+  pendingReview: number;
 }
 
 export interface QuarantinedVideoDiag {
@@ -1219,6 +1245,78 @@ export async function getAdminPageData(): Promise<AdminPageData> {
       };
     });
 
+  // Discovery lane status + "Possible new content" review candidates.
+  const REVIEW_LABELS: Record<string, string> = {
+    older_than_discovery_window: "Posted before the auto-add window — confirm it's campaign content",
+    no_stable_id: "No stable platform ID — confirm before adding",
+    review: "Pending review",
+  };
+  const reviewRaw = (await store.listVideos({ includeHidden: true })).filter((v) => isReviewCandidate(v));
+  const reviewCandidates: QuarantinedVideoDiag[] = reviewRaw.map((v) => {
+    const rawPost =
+      v.rawJson && typeof v.rawJson === "object"
+        ? (v.rawJson as { source?: unknown; discoveryReviewReason?: unknown; post?: { published_at?: unknown } })
+        : null;
+    let parsed: string | null = null;
+    if (v.publishedAt) {
+      const t = Date.parse(v.publishedAt);
+      parsed = Number.isNaN(t) ? null : new Date(t).toISOString();
+    }
+    const src = typeof rawPost?.source === "string" ? rawPost.source : null;
+    const reason = typeof rawPost?.discoveryReviewReason === "string" ? rawPost.discoveryReviewReason : "review";
+    return {
+      videoId: v.id,
+      platform: v.platform,
+      title: v.title ?? v.caption ?? null,
+      thumbnailUrl: v.thumbnailUrl,
+      urlSlug: (v.originalUrl ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 60),
+      publishedAtStored: v.publishedAt,
+      rawPublishedAt: rawPost?.post?.published_at == null ? null : String(rawPost.post.published_at),
+      publishedAtParsed: parsed,
+      reason: "before_campaign_start" as IneligibilityReason, // placeholder; UI uses reasonLabel
+      reasonLabel: REVIEW_LABELS[reason] ?? reason,
+      source: src === "socialcrawl" ? "socialcrawl" : src ? "other" : "collector",
+      episodeName: null,
+    };
+  });
+
+  const policyCfg = getRefreshPolicyConfig();
+  const discRuns = await store.listRefreshRuns(60);
+  const lastDiscRun = discRuns.find(
+    (r) => (r.status === "success" || r.status === "partial") && decodeRunMode(r)?.discovery,
+  );
+  let lastRunCounts: DiscoveryStatus["lastRun"] = null;
+  if (lastDiscRun) {
+    let added = 0,
+      review = 0,
+      ignored = 0;
+    for (const line of lastDiscRun.rawLog ?? []) {
+      const m = line.match(/discovery — added:(\d+) review:(\d+) ignored:(\d+)/);
+      if (m) {
+        added += Number(m[1]);
+        review += Number(m[2]);
+        ignored += Number(m[3]);
+      }
+    }
+    lastRunCounts = { at: lastDiscRun.startedAt, added, review, ignored };
+  }
+  const cadenceMin = policyCfg.discoveryIntervalMin;
+  const lastPullAt = lastDiscRun?.startedAt ?? null;
+  const nextPullAt = nextActiveTime(
+    lastPullAt ? new Date(new Date(lastPullAt).getTime() + cadenceMin * 60_000) : new Date(),
+    policyCfg,
+  ).toISOString();
+  const discovery: DiscoveryStatus = {
+    enabled: policyCfg.enableDiscovery,
+    cadenceHours: Math.round((cadenceMin / 60) * 10) / 10,
+    lookbackHours: policyCfg.discoveryLookbackHours,
+    lastPullAt,
+    nextPullAt,
+    quietHours: isQuietHours(new Date(), policyCfg),
+    lastRun: lastRunCounts,
+    pendingReview: reviewCandidates.length,
+  };
+
   const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
     b.capturedAt.localeCompare(a.capturedAt),
   );
@@ -1322,6 +1420,8 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     milestones,
     facebookDiagnostics,
     quarantinedVideos,
+    discovery,
+    reviewCandidates,
     socialcrawl,
     youtubeProvider,
     readiness: {

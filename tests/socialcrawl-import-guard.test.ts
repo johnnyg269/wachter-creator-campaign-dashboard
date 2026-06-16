@@ -343,7 +343,7 @@ describe("tracked-only refresh (integration, real pipeline)", () => {
       attempts: [],
     });
 
-    await runRefresh("script");
+    await runRefresh("script", { mode: "metrics" }); // metrics-only lane never imports
 
     // No new videos created — unmatched feed items were ignored.
     const after = await store.listVideos({ includeHidden: true });
