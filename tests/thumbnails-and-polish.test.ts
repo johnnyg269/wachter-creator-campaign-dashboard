@@ -37,14 +37,19 @@ describe("SocialCrawl TikTok thumbnail resolver", () => {
     published_at: 1781569866,
   };
 
-  it("finds the real cover from content.thumbnail_url", async () => {
-    stub({ ...base, content: { text: "x", thumbnail_url: "https://p16-common-sign.tiktokcdn-us.com/cover.heic" } });
-    expect((await run()).thumbnailUrl).toBe("https://p16-common-sign.tiktokcdn-us.com/cover.heic");
+  it("finds a real (renderable) cover from content.thumbnail_url", async () => {
+    stub({ ...base, content: { text: "x", thumbnail_url: "https://p16.tiktokcdn-us.com/cover.jpg" } });
+    expect((await run()).thumbnailUrl).toBe("https://p16.tiktokcdn-us.com/cover.jpg");
   });
 
-  it("KEEPS a HEIC cover (the /api/thumb proxy transcodes it to JPEG)", async () => {
+  it("rejects HEIC covers (browser-unrenderable) → null, keeping last-known-good", async () => {
     stub({ ...base, content: { thumbnail_url: "https://cdn.tiktokcdn-us.com/x.heic?sig=1" } });
-    expect((await run()).thumbnailUrl).toMatch(/\.heic/);
+    expect((await run()).thumbnailUrl).toBeNull();
+  });
+
+  it("rejects the TikTok ~tplv .heic template cover", async () => {
+    stub({ ...base, content: { thumbnail_url: "https://p16-common-sign.tiktokcdn-us.com/abc~tplv-tiktokx-cropcenter:300:400.heic?dr=9&x-signature=z" } });
+    expect((await run()).thumbnailUrl).toBeNull();
   });
 
   it("falls back across cover fields when thumbnail_url is empty", async () => {
@@ -127,17 +132,15 @@ describe("TikTok thumbnail last-known-good (integration)", () => {
 });
 
 // ── Source-level: HEIC proxy transcode + visual polish ────────────────────────
-describe("thumbnail proxy transcodes HEIC", () => {
-  it("the /api/thumb proxy transcodes non-web-safe formats to JPEG via sharp", () => {
-    const route = read("src/app/api/thumb/route.ts");
-    expect(route).toMatch(/import\(["']sharp["']\)/);
-    expect(route).toContain("BROWSER_SAFE");
-    expect(route).toMatch(/\.jpeg\(/);
+describe("thumbnail proxy", () => {
+  // TikTok's signed CDN blocks datacenter fetches, so server-side transcode is
+  // not viable — we don't depend on sharp; HEIC covers are rejected upstream.
+  it("does not depend on sharp / HEIC transcode", () => {
+    expect(read("src/app/api/thumb/route.ts")).not.toContain("sharp");
+    expect(read("package.json")).not.toMatch(/"sharp"\s*:/);
+    expect(read("next.config.ts")).not.toMatch(/serverExternalPackages/);
   });
-  it("sharp is declared as a server external package", () => {
-    expect(read("next.config.ts")).toMatch(/serverExternalPackages.*sharp/s);
-  });
-  it("the TikTok CDN host is allowlisted for proxying", () => {
+  it("keeps the TikTok CDN host allowlisted (Apify/IG/FB proxying still works)", () => {
     expect(read("src/lib/thumb-proxy.ts")).toContain(".tiktokcdn-us.com");
   });
 });
