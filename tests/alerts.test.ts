@@ -109,7 +109,9 @@ describe("generateAlerts", () => {
         campaignId: campaign.id,
         platform: "facebook",
         title: "Old post",
-        publishedAt: iso(60 * 24 * 10), // 10 days ago
+        // 6 days ago: past NO_POST_DAYS (5) so the rule fires, and on/after the
+        // campaign-start floor so the eligibility filter keeps it.
+        publishedAt: iso(60 * 24 * 6),
         lastRefreshedAt: iso(1),
         thumbnailUrl: "https://cdn.example/t.jpg",
       }),

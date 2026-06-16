@@ -127,7 +127,7 @@ describe("auto-assignment never overwrites manual assignment", () => {
     const refresh = read("src/lib/refresh.ts");
     const updateBlock = refresh.slice(
       refresh.indexOf("if (existing) {"),
-      refresh.indexOf("// Campaign rule"),
+      refresh.indexOf("// Strict campaign-inclusion gate"),
     );
     expect(updateBlock).not.toContain("episodeGroupId");
   });

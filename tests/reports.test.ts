@@ -178,7 +178,7 @@ describe("buildReportsData (real query stack)", () => {
       title: "Reel 55",
       caption: null,
       thumbnailUrl: "https://thumb.jpg",
-      publishedAt: null,
+      publishedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
       firstTrackedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
       lastRefreshedAt: new Date().toISOString(),
       status: "active",

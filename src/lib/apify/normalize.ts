@@ -39,22 +39,47 @@ function firstString(obj: Raw, paths: string[]): string | null {
   return null;
 }
 
+// Sanity floor: any real social-media post is well after 2005. A value that
+// resolves before this is treated as garbage (e.g. Unix SECONDS mistakenly read
+// as milliseconds → ~Jan 1970), so it becomes null — NEVER a fake 1970 date.
+const MIN_PLAUSIBLE_YEAR = 2005;
+
+/**
+ * Parse ONE candidate date value into an ISO string, or null.
+ *  - ISO/parseable string → ISO
+ *  - Unix SECONDS (number or 10-digit string) → ×1000 → ISO
+ *  - Unix MILLISECONDS (number or 13-digit string) → ISO
+ *  - anything invalid / implausible (pre-2005) / other bare number → null
+ * Never derives a date from an unrelated number; never yields Jan 1970.
+ */
+export function parseTimestamp(v: unknown): string | null {
+  const finalize = (ms: number): string | null => {
+    const d = new Date(ms);
+    if (isNaN(d.getTime()) || d.getUTCFullYear() < MIN_PLAUSIBLE_YEAR) return null;
+    return d.toISOString();
+  };
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    // >1e11 ms ≈ year 1973+; below that a bare number is far more likely SECONDS.
+    return finalize(v > 100_000_000_000 ? v : v * 1000);
+  }
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (s === "") return null;
+    if (/^\d{10}$/.test(s)) return finalize(Number(s) * 1000); // unix seconds
+    if (/^\d{13}$/.test(s)) return finalize(Number(s)); // unix millis
+    if (/^\d+$/.test(s)) return null; // ambiguous bare number → null (never 1970)
+    const d = new Date(s);
+    // Route through finalize so the pre-2005 floor applies to date strings too —
+    // a literal "1970-01-01T00:00:00Z" must become null, not pass through.
+    return isNaN(d.getTime()) ? null : finalize(d.getTime());
+  }
+  return null;
+}
+
 function firstDate(obj: Raw, paths: string[]): string | null {
   for (const p of paths) {
-    const v = pick(obj, p);
-    if (typeof v === "number" && v > 1_000_000_000) {
-      // unix seconds or millis
-      const ms = v > 100_000_000_000 ? v : v * 1000;
-      const d = new Date(ms);
-      if (!isNaN(d.getTime())) return d.toISOString();
-    }
-    if (typeof v === "string" && v.trim() !== "") {
-      const s = v.trim();
-      if (/^\d{10}$/.test(s)) return new Date(Number(s) * 1000).toISOString();
-      if (/^\d{13}$/.test(s)) return new Date(Number(s)).toISOString();
-      const d = new Date(s);
-      if (!isNaN(d.getTime())) return d.toISOString();
-    }
+    const r = parseTimestamp(pick(obj, p));
+    if (r) return r;
   }
   return null;
 }

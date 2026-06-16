@@ -20,6 +20,7 @@ import { ensureSeedData, effectiveStartDate } from "./seed";
 import { resolveProvider } from "./providers/registry";
 import { ApifyProvider } from "./providers/apify-provider";
 import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./apify/normalize";
+import { campaignStartMs, isCampaignEligible, UNASSIGNED_EPISODE_NAME } from "./eligibility";
 import { applyMonotonicViews, engagementRate } from "./metrics";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
@@ -365,9 +366,15 @@ async function refreshPlatform(
 
   const profiles = (await store.listProfiles()).filter((p) => p.platform === platform);
   const profile = profiles[0] ?? null;
-  const videos = (await store.listVideos({ platform, includeHidden: true })).filter(
-    (v) => !v.hidden,
-  );
+  // Eligible tracked campaign videos only. Quarantined / out-of-campaign records
+  // (e.g. old profile-feed imports with epoch dates) are excluded so refresh
+  // never re-snapshots them and never treats them as tracked.
+  const startMs = campaignStartMs();
+  const episodeGroups = await store.listEpisodeGroups();
+  const unassignedId = episodeGroups.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
+  const videos = (await store.listVideos({ platform, includeHidden: true }))
+    .filter((v) => !v.hidden)
+    .filter((v) => isCampaignEligible(v, startMs, unassignedId));
 
   if (!readiness.ready) {
     out.status = "skipped";
@@ -473,6 +480,13 @@ async function refreshPlatform(
     // Group fetched records by the tracked video they resolve to and merge —
     // one snapshot per video per refresh, never a views-less duplicate
     // clobbering a surface that did expose views.
+    // Tracked-only refresh: a provider profile sweep (SocialCrawl especially)
+    // returns the creator's WHOLE recent feed. We update metrics ONLY for videos
+    // already tracked AND eligible; every other feed item — the creator's other
+    // posts, old pre-campaign reels — is ignored, never auto-imported. This is
+    // the fix for the over-import that corrupted totals.
+    const eligibleTrackedIds = new Set(videos.map((v) => v.id));
+    let unmatchedIgnored = 0;
     const groups = new Map<string, { merged: NormalizedVideo; commentKeys: Set<string> }>();
     for (const n of fetched.videos) {
       const existing = await store.findVideoByUrlOrExternalId(
@@ -480,7 +494,11 @@ async function refreshPlatform(
         n.originalUrl,
         n.externalVideoId,
       );
-      const gkey = existing ? `v:${existing.id}` : `n:${n.externalVideoId ?? n.originalUrl}`;
+      if (!existing || !eligibleTrackedIds.has(existing.id)) {
+        unmatchedIgnored++;
+        continue;
+      }
+      const gkey = `v:${existing.id}`;
       const commentKey = n.externalVideoId ?? n.originalUrl ?? "";
       const group = groups.get(gkey);
       if (!group) {
@@ -492,6 +510,11 @@ async function refreshPlatform(
             : mergeNormalizedVideos(group.merged, n);
         group.commentKeys.add(commentKey);
       }
+    }
+    if (unmatchedIgnored > 0) {
+      log.push(
+        `${platform}: ignored ${unmatchedIgnored} unmatched profile item(s) — tracked-only refresh, not imported`,
+      );
     }
 
     // Empty-cycle protection. Facebook's actor alternates between a feed
@@ -671,10 +694,24 @@ async function upsertFetchedVideo(
     });
   }
 
-  // Campaign rule: only track NEW videos published at/after the start point.
-  // (Seeds are matched above by URL/ID regardless of date; discovery sweeps
-  // intentionally over-fetch a few days back to catch them.)
-  if (n.publishedAt && campaign.startDate && n.publishedAt < campaign.startDate) {
+  // Strict campaign-inclusion gate for any NEW record. Normal refresh is now
+  // tracked-only and never reaches this branch; this is defense-in-depth for any
+  // future discovery path (e.g. an admin "add from review queue" flow). Reject
+  // anything that isn't eligible campaign content — invalid/epoch date, before
+  // the campaign start, unsupported platform, or missing canonical URL.
+  if (
+    !isCampaignEligible(
+      {
+        platform,
+        originalUrl: n.originalUrl,
+        publishedAt: n.publishedAt,
+        isSeed: false,
+        episodeGroupId: null,
+      },
+      campaignStartMs(),
+      null,
+    )
+  ) {
     return null;
   }
 

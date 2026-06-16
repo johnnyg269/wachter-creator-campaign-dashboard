@@ -102,7 +102,7 @@ describe("getVideosPageData (range-aware, real data)", () => {
       title: `Video ${opts.id}`,
       caption: null,
       thumbnailUrl: "https://p16.tiktokcdn.com/x.jpg",
-      publishedAt: null,
+      publishedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
       firstTrackedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
       lastRefreshedAt: new Date().toISOString(),
       status: "active",

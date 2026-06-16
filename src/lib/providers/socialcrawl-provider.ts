@@ -11,6 +11,7 @@
 // sent only in the x-api-key header, never in a URL).
 
 import { getSocialcrawlKey } from "../config";
+import { parseTimestamp } from "../apify/normalize";
 import type { NormalizedComment, NormalizedVideo, Platform, PlatformProfile, Video } from "../types";
 import { parseVideoUrl } from "../url-parse";
 import type {
@@ -29,8 +30,18 @@ interface ScPost {
   permalink?: string;
   content?: { text?: string; thumbnail_url?: string };
   engagement?: { views?: number; likes?: number; comments?: number; shares?: number; saves?: number };
-  published_at?: string;
-  created_at?: string;
+  // SocialCrawl sends published_at as a Unix-SECONDS NUMBER (e.g. 1781569866),
+  // and created_at is typically absent — hence `string | number`. The raw value
+  // MUST go through parseTimestamp (never straight into new Date(), which would
+  // read seconds as ms and yield "Jan 1970"). Other date keys are accepted
+  // defensively in case the schema varies.
+  published_at?: string | number;
+  publishedAt?: string | number;
+  created_at?: string | number;
+  createdAt?: string | number;
+  timestamp?: string | number;
+  taken_at?: string | number;
+  date?: string | number;
   author?: { display_name?: string; username?: string };
 }
 interface ScItem {
@@ -130,7 +141,17 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
       title: typeof post.content?.text === "string" ? post.content.text.slice(0, 80) : null,
       caption: post.content?.text ?? null,
       thumbnailUrl: post.content?.thumbnail_url ?? null,
-      publishedAt: post.published_at ?? post.created_at ?? null,
+      // SocialCrawl published_at is Unix SECONDS — parse robustly (sec/ms/ISO →
+      // ISO, invalid → null) so it never becomes a "Jan 1970" date.
+      publishedAt:
+        parseTimestamp(post.published_at) ??
+        parseTimestamp(post.publishedAt) ??
+        parseTimestamp(post.created_at) ??
+        parseTimestamp(post.createdAt) ??
+        parseTimestamp(post.timestamp) ??
+        parseTimestamp(post.taken_at) ??
+        parseTimestamp(post.date) ??
+        null,
       authorName: post.author?.display_name ?? null,
       authorHandle: post.author?.username ?? null,
       views: num(e.views), // Facebook: PUBLIC Reel plays

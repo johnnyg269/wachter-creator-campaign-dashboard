@@ -64,14 +64,26 @@ function toDate(s: string): Date {
   return new Date(s);
 }
 
+// Defense-in-depth: reject an unparseable/garbage value rather than writing an
+// "Invalid Date" or a pre-2005/1970 epoch into a nullable DATE column. Providers
+// should already hand us clean ISO via parseTimestamp; this is the last line
+// before the DB. Only used for NULLABLE date columns (toDateOrNull/patchDate);
+// non-nullable columns use toDate().
+function safeDate(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime()) || d.getUTCFullYear() < 2005) return null;
+  return d;
+}
+
 function toDateOrNull(s: string | null): Date | null {
-  return s ? new Date(s) : null;
+  return safeDate(s);
 }
 
 /** For Partial<> patches: undefined = leave unchanged, null = set NULL. */
 function patchDate(s: string | null | undefined): Date | null | undefined {
   if (s === undefined) return undefined;
-  return s === null ? null : new Date(s);
+  return safeDate(s);
 }
 
 type JsonIn = Prisma.InputJsonValue | typeof Prisma.JsonNull;

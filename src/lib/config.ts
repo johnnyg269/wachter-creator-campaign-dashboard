@@ -110,6 +110,18 @@ export function actorEnvKey(platform: Platform): string {
   return ACTOR_ENV_KEYS[platform];
 }
 
+/**
+ * Campaign start floor (ET calendar date, YYYY-MM-DD). Content published before
+ * this — and any record with an invalid/epoch date — is excluded from active
+ * campaign totals (see src/lib/eligibility.ts). Defaults to 2026-06-08 (the ET
+ * day the campaign launched; the earliest legit post is 2026-06-09). Adjust via
+ * the CAMPAIGN_START_DATE_ET env var without a code change.
+ */
+export function getCampaignStartDateEt(): string {
+  const raw = process.env.CAMPAIGN_START_DATE_ET?.trim();
+  return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "2026-06-08";
+}
+
 // ---------------------------------------------------------------------------
 // Campaign seed data (URLs provided at campaign kickoff)
 // ---------------------------------------------------------------------------

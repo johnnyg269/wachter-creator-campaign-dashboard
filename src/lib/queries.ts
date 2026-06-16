@@ -67,6 +67,14 @@ import {
 import { computeMilestones, type Milestone, type MilestoneInput } from "./milestones";
 import { getRefreshPolicyConfig, socialcrawlCreditsToday } from "./refresh-policy";
 import { resolveViews } from "./apify/view-resolver";
+import {
+  campaignStartMs,
+  ineligibilityReason,
+  isCampaignEligible,
+  INELIGIBILITY_LABELS,
+  UNASSIGNED_EPISODE_NAME,
+  type IneligibilityReason,
+} from "./eligibility";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -193,18 +201,36 @@ export interface CampaignData {
 export async function loadCampaignData(includeHidden = false): Promise<CampaignData> {
   const store = getStore();
   const campaign = await ensureSeedData(store);
+  const episodes = await store.listEpisodeGroups();
+  const unassignedId = episodes.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
+  const startMs = campaignStartMs();
   // Strip raw actor payloads before anything page-facing: client-component
   // props serialize into the public page payload, and rawJson contains
   // internal collector URLs (signed dataset links) and vendor field names.
   // Pipelines that need rawJson read the store directly.
-  const videos = (await store.listVideos({ includeHidden })).map((v) => ({
-    ...v,
-    rawJson: null,
-    errorMessage: v.errorMessage ? v.errorMessage.replace(/apify/gi, "collector") : null,
-  }));
+  //
+  // Campaign-eligibility filter (THE chokepoint): out-of-campaign / corrupt
+  // records (e.g. SocialCrawl profile-feed imports with epoch dates) are
+  // dropped here, so every downstream total/list/chart/milestone — which all
+  // derive from this video set — excludes them automatically.
+  const videos = (await store.listVideos({ includeHidden }))
+    .filter((v) => isCampaignEligible(v, startMs, unassignedId))
+    .map((v) => ({
+      ...v,
+      rawJson: null,
+      errorMessage: v.errorMessage
+        ? v.errorMessage.replace(/apify|socialcrawl/gi, "collector")
+        : null,
+    }));
+  // Scope snapshots to the eligible video set too — otherwise the aggregate
+  // trend (and periodDelta / velocity milestone / reports overallTrend, which
+  // all read snapshotsByVideo) would still sum quarantined videos' snapshots
+  // even though their video records are filtered out of every other total.
+  const eligibleIds = new Set(videos.map((v) => v.id));
   const allSnaps = await store.listAllSnapshots();
   const snapshotsByVideo = new Map<string, MetricSnapshot[]>();
   for (const s of allSnaps) {
+    if (!eligibleIds.has(s.videoId)) continue;
     const arr = snapshotsByVideo.get(s.videoId) ?? [];
     arr.push(s);
     snapshotsByVideo.set(s.videoId, arr);
@@ -218,7 +244,7 @@ export async function loadCampaignData(includeHidden = false): Promise<CampaignD
     videos,
     metricsByVideo,
     snapshotsByVideo,
-    episodes: await store.listEpisodeGroups(),
+    episodes,
     profiles: await store.listProfiles(),
   };
 }
@@ -959,6 +985,9 @@ export interface AdminPageData {
   milestones: Milestone[];
   /** Per-video Facebook view-accuracy diagnostics (admin-only). */
   facebookDiagnostics: FacebookDiagnostic[];
+  /** Review queue: records excluded by the campaign-eligibility filter (not
+   *  counted anywhere) — e.g. old profile-feed imports with epoch dates. */
+  quarantinedVideos: QuarantinedVideoDiag[];
   /** SocialCrawl provider status + credit usage (admin-only, never the key). */
   socialcrawl: SocialcrawlAdminStatus;
   /** YouTube provider health — API vs Apify fallback (never the key value). */
@@ -1007,6 +1036,26 @@ export interface FacebookDiagnostic {
   lastRefreshedAt: string | null;
   /** Other tracked FB videos sharing this reel's id/canonical URL (dupes). */
   duplicateCandidateIds: string[];
+}
+
+export interface QuarantinedVideoDiag {
+  videoId: string;
+  platform: Platform;
+  title: string | null;
+  thumbnailUrl: string | null;
+  /** Path-only slug of the URL (never a secret). */
+  urlSlug: string;
+  /** The publishedAt value stored on the record (ISO, may be the epoch date). */
+  publishedAtStored: string | null;
+  /** The raw provider timestamp before parsing (e.g. the Unix-seconds number). */
+  rawPublishedAt: string | null;
+  /** publishedAtStored re-parsed to ISO, or null if unparseable. */
+  publishedAtParsed: string | null;
+  reason: IneligibilityReason;
+  reasonLabel: string;
+  /** Provenance bucket — "socialcrawl" | "other" | "collector" (never a vendor name). */
+  source: "socialcrawl" | "other" | "collector";
+  episodeName: string | null;
 }
 
 export interface SocialcrawlAdminStatus {
@@ -1132,6 +1181,44 @@ export async function getAdminPageData(): Promise<AdminPageData> {
       duplicateCandidateIds: [...dupes],
     };
   });
+  // Review queue: records EXCLUDED by the eligibility filter (e.g. old profile-
+  // feed imports with epoch dates). Read raw store rows so we can surface the
+  // provider source + raw timestamp (loadCampaignData filters these out and
+  // strips rawJson). Hidden records are dropped — admin "Hide" clears the queue.
+  const startMsAdmin = campaignStartMs();
+  const unassignedIdAdmin = data.episodes.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
+  const quarantinedVideos: QuarantinedVideoDiag[] = (await store.listVideos({ includeHidden: true }))
+    .filter((v) => !v.hidden)
+    .map((v) => ({ v, reason: ineligibilityReason(v, startMsAdmin, unassignedIdAdmin) }))
+    .filter((x): x is { v: Video; reason: IneligibilityReason } => x.reason !== null)
+    .map(({ v, reason }) => {
+      const rawPost =
+        v.rawJson && typeof v.rawJson === "object"
+          ? (v.rawJson as { source?: unknown; post?: { published_at?: unknown } })
+          : null;
+      const rawTs = rawPost?.post?.published_at;
+      let parsed: string | null = null;
+      if (v.publishedAt) {
+        const t = Date.parse(v.publishedAt);
+        parsed = Number.isNaN(t) ? null : new Date(t).toISOString();
+      }
+      const src = typeof rawPost?.source === "string" ? rawPost.source : null;
+      return {
+        videoId: v.id,
+        platform: v.platform,
+        title: v.title ?? v.caption ?? null,
+        thumbnailUrl: v.thumbnailUrl,
+        urlSlug: (v.originalUrl ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 60),
+        publishedAtStored: v.publishedAt,
+        rawPublishedAt: rawTs == null ? null : String(rawTs),
+        publishedAtParsed: parsed,
+        reason,
+        reasonLabel: INELIGIBILITY_LABELS[reason],
+        source: src === "socialcrawl" ? "socialcrawl" : src ? "other" : "collector",
+        episodeName: v.episodeGroupId ? (episodeById.get(v.episodeGroupId) ?? null) : null,
+      };
+    });
+
   const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
     b.capturedAt.localeCompare(a.capturedAt),
   );
@@ -1234,6 +1321,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     attempts: allAttempts.slice(0, 40),
     milestones,
     facebookDiagnostics,
+    quarantinedVideos,
     socialcrawl,
     youtubeProvider,
     readiness: {

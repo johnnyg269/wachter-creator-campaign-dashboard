@@ -19,6 +19,7 @@ import {
   type VideoMetrics,
 } from "./metrics";
 import { formatCompact } from "./format";
+import { campaignStartMs, isCampaignEligible, UNASSIGNED_EPISODE_NAME } from "./eligibility";
 
 const SPIKE_MIN_HOURLY_VIEWS = 1000;
 const SPIKE_RATIO = 4; // 1h pace vs avg hourly pace over prior 24h
@@ -68,7 +69,14 @@ function window6h(): string {
 }
 
 export async function generateAlerts(store: Store, campaign: Campaign): Promise<number> {
-  const videos = await store.listVideos();
+  // Only alert on eligible campaign content — never on quarantined / out-of-
+  // campaign imports (mirrors the read-time filter in loadCampaignData).
+  const episodes = await store.listEpisodeGroups();
+  const unassignedId = episodes.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
+  const startMs = campaignStartMs();
+  const videos = (await store.listVideos()).filter((v) =>
+    isCampaignEligible(v, startMs, unassignedId),
+  );
   let created = 0;
 
   for (const video of videos) {

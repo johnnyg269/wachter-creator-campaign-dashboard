@@ -18,6 +18,7 @@ import { CampaignSettings } from "./campaign-settings";
 import { ContentManager } from "./content-manager";
 import { RefreshHealthPanel } from "./refresh-health";
 import { EpisodeManager } from "./episode-manager";
+import { ReviewQueue } from "./review-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ const SECTIONS = [
   { id: "providers", label: "Metrics Providers" },
   { id: "youtube", label: "YouTube Provider" },
   { id: "facebook", label: "Facebook Views" },
+  { id: "review", label: "Review Queue" },
   { id: "milestones", label: "Milestones" },
   { id: "episodes", label: "Episodes" },
   { id: "campaign", label: "Campaign" },
@@ -405,6 +407,18 @@ export default async function AdminPage() {
                   </tbody>
                 </table>
               )}
+            </CardBody>
+          </Card>
+        </section>
+
+        <section id="review">
+          <Card>
+            <CardHeader
+              title="Review queue — unmatched / out-of-campaign content"
+              subtitle="Records excluded from every total by the campaign-eligibility filter (invalid/epoch dates or content published before the campaign start). Refreshes update only already-tracked campaign videos; profile-feed content is never auto-imported. These do not count anywhere — review and exclude permanently if desired."
+            />
+            <CardBody>
+              <ReviewQueue items={data.quarantinedVideos} />
             </CardBody>
           </Card>
         </section>
