@@ -21,11 +21,13 @@ export const SCHEDULER: SchedulerInfo = {
   type: "cron-job.org",
   jobId: 7793727,
   jobName: "Wachter Campaign Dashboard Refresh",
-  // Cost control (2026-06-12): the job PINGS every 30 minutes during active
-  // hours (06:00–23:59 America/New_York), and the app's refresh policy runs a
-  // FULL refresh every 60 minutes — this is the cadence the public page
-  // promises. The 5-minute cadence burned ~$20/day in Apify credits.
-  cadenceMinutes: 60,
+  // SocialCrawl era (2026-06-15): SocialCrawl metrics are cheap (~3 credits per
+  // refresh), so the job PINGS every 15 minutes during active hours
+  // (07:00–23:59 America/New_York) and the app runs a metrics refresh each tick.
+  // The app-side quiet-hours guard (00:00–07:00 ET) + the daily SocialCrawl
+  // credit cap remain authoritative. (On the Apify fallback regime the app-side
+  // interval stays 60 min, so extra pings are skipped — cost-safe.)
+  cadenceMinutes: 15,
   verified: true, // verified live 2026-06-12: 202 responses + cron-triggered runs in Supabase
   backup: "GitHub Actions every 30 min (best-effort backup)",
 };

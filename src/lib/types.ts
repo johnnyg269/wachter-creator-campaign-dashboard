@@ -57,7 +57,7 @@ export type ProviderStatusValue =
   | "discovery_unavailable"
   | "untested";
 
-export type ProviderType = "apify" | "youtube_api" | "manual" | "mock";
+export type ProviderType = "apify" | "youtube_api" | "socialcrawl" | "manual" | "mock";
 
 export type AlertSeverity = "info" | "opportunity" | "warning" | "critical";
 

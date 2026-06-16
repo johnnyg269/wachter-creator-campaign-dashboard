@@ -53,8 +53,19 @@ import {
 } from "./range";
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
-import { getAdminPassword, getCronSecret, getYouTubeApiKey, isMockMode } from "./config";
+import {
+  getAdminPassword,
+  getApifyToken,
+  getCronSecret,
+  getSocialcrawlDailyCreditCap,
+  getSocialcrawlKey,
+  getYouTubeApiKey,
+  isMockMode,
+  isSocialcrawlEnabled,
+  metricsProviderFor,
+} from "./config";
 import { computeMilestones, type Milestone, type MilestoneInput } from "./milestones";
+import { getRefreshPolicyConfig, socialcrawlCreditsToday } from "./refresh-policy";
 import { resolveViews } from "./apify/view-resolver";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
@@ -948,6 +959,8 @@ export interface AdminPageData {
   milestones: Milestone[];
   /** Per-video Facebook view-accuracy diagnostics (admin-only). */
   facebookDiagnostics: FacebookDiagnostic[];
+  /** SocialCrawl provider status + credit usage (admin-only, never the key). */
+  socialcrawl: SocialcrawlAdminStatus;
   /** YouTube provider health — API vs Apify fallback (never the key value). */
   youtubeProvider: YouTubeProviderStatus;
   /** Per-episode rollups for the admin Episodes manager. */
@@ -994,6 +1007,23 @@ export interface FacebookDiagnostic {
   lastRefreshedAt: string | null;
   /** Other tracked FB videos sharing this reel's id/canonical URL (dupes). */
   duplicateCandidateIds: string[];
+}
+
+export interface SocialcrawlAdminStatus {
+  /** Key present (presence only — value never exposed). */
+  configured: boolean;
+  /** Master switch + key both satisfied → SocialCrawl is the active primary. */
+  enabled: boolean;
+  creditsToday: number;
+  dailyCap: number;
+  calls: number;
+  cached: number;
+  failed: number;
+  apifyFallbackAvailable: boolean;
+  /** Active metrics provider per non-YouTube platform. */
+  providerByPlatform: Record<"tiktok" | "instagram" | "facebook", "socialcrawl" | "apify">;
+  /** Facebook view source for the public dashboard. */
+  facebookViewSource: "socialcrawl_public_plays" | "apify_viewscount";
 }
 
 export interface YouTubeProviderStatus {
@@ -1120,6 +1150,28 @@ export async function getAdminPageData(): Promise<AdminPageData> {
       (a) => a.platform === "youtube" && a.provider === "apify",
     ),
   };
+
+  // SocialCrawl status + credit usage (admin-only; the key is never exposed).
+  const scTz = getRefreshPolicyConfig().quietTimezone;
+  const scUsage = socialcrawlCreditsToday(allAttempts, new Date(), scTz);
+  const fbProvider = metricsProviderFor("facebook");
+  const socialcrawl: SocialcrawlAdminStatus = {
+    configured: getSocialcrawlKey() !== null,
+    enabled: isSocialcrawlEnabled(),
+    creditsToday: scUsage.credits,
+    dailyCap: getSocialcrawlDailyCreditCap(),
+    calls: scUsage.calls,
+    cached: scUsage.cached,
+    failed: scUsage.failed,
+    apifyFallbackAvailable: getApifyToken() !== null,
+    providerByPlatform: {
+      tiktok: metricsProviderFor("tiktok"),
+      instagram: metricsProviderFor("instagram"),
+      facebook: fbProvider,
+    },
+    facebookViewSource: fbProvider === "socialcrawl" ? "socialcrawl_public_plays" : "apify_viewscount",
+  };
+
   // Actor IDs are admin-only — read them from the persisted provider configs,
   // never from the (publicly served) health summary. Mirror the old behavior:
   // only platforms actually served by Apify surface an actor id.
@@ -1182,6 +1234,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     attempts: allAttempts.slice(0, 40),
     milestones,
     facebookDiagnostics,
+    socialcrawl,
     youtubeProvider,
     readiness: {
       databaseConnected: health.store.kind === "postgres",

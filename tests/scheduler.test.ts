@@ -16,9 +16,9 @@ import {
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf-8");
 
 describe("scheduler metadata", () => {
-  it("cron-job.org is the primary scheduler at a 60-minute full-refresh cadence", () => {
+  it("cron-job.org is the primary scheduler at a 15-minute metrics cadence", () => {
     expect(SCHEDULER.type).toBe("cron-job.org");
-    expect(SCHEDULER.cadenceMinutes).toBe(60);
+    expect(SCHEDULER.cadenceMinutes).toBe(15);
     expect(SCHEDULER.jobId).toBeGreaterThan(0);
     expect(SCHEDULER.jobName).toBe("Wachter Campaign Dashboard Refresh");
     expect(SCHEDULER.backup).toContain("GitHub Actions");
@@ -33,8 +33,9 @@ describe("computeRefreshHealth", () => {
   const NOW = new Date("2026-06-12T12:00:00.000Z");
   const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
   it("healthy when the last success is within 1.5x the cadence", () => {
+    // 1.5 × 15-min cadence = 22.5 min; a 15-min-old success is well within.
     expect(
-      computeRefreshHealth({ lastSuccessAt: ago(45), lastAttemptStatus: "success", now: NOW }),
+      computeRefreshHealth({ lastSuccessAt: ago(15), lastAttemptStatus: "success", now: NOW }),
     ).toBe("healthy");
   });
   it("delayed when the last success is older than 1.5x the cadence", () => {

@@ -30,6 +30,7 @@ const CFG: RefreshPolicyConfig = {
   commentsIntervalMin: 1440,
   commentDetailIntervalHours: 24,
   commentDetailHour: 9,
+  commentDetailWindows: [9],
   commentDetailTimezone: "America/New_York",
   enableLight: false,
   enableDiscovery: true,
@@ -37,6 +38,8 @@ const CFG: RefreshPolicyConfig = {
   budgetTargetUsd: 2,
   hardCapUsd: 3,
   estCostPerRunUsd: 0.02,
+  socialcrawlEnabled: false,
+  socialcrawlDailyCreditCap: 300,
   quietHoursEnabled: true,
   quietTimezone: "America/New_York",
   quietStartHour: 0,
@@ -216,7 +219,8 @@ describe("tiered cadence decisions", () => {
 describe("comment detail: once per day, at/after the target hour", () => {
   const EIGHT_AM = new Date("2026-06-12T12:00:00.000Z"); // 08:00 EDT
   const NINE_AM = new Date("2026-06-12T13:00:00.000Z"); // 09:00 EDT
-  const commentRunToday = () => run({ startedAt: minsBefore(NINE_AM, 30) }); // comments:on, today
+  // A pull AT/AFTER the window satisfies it (window-based: a pre-window pull does not).
+  const commentRunToday = () => run({ startedAt: NINE_AM.toISOString() }); // comments:on, at the window
   const metricsOnlyToday = () =>
     run({
       startedAt: minsBefore(NINE_AM, 30),
@@ -375,7 +379,7 @@ describe("pipeline wiring (source-level)", () => {
     expect(cfg.discoveryIntervalMin).toBe(720); // twice a day
     expect(cfg.commentsIntervalMin).toBe(1440); // once a day
     expect(cfg.commentDetailIntervalHours).toBe(24);
-    expect(cfg.commentDetailHour).toBe(9);
+    expect(cfg.commentDetailHour).toBe(12); // first comment-detail window (12:00 ET)
     expect(cfg.commentDetailTimezone).toBe("America/New_York");
     expect(cfg.quietTimezone).toBe("America/New_York");
     expect(cfg.hardCapUsd).toBeGreaterThan(0);

@@ -29,6 +29,7 @@ import {
   encodeRunMode,
   getRefreshPolicyConfig,
   localDateKey,
+  socialcrawlCreditsToday,
   type RunMode,
 } from "./refresh-policy";
 
@@ -197,13 +198,18 @@ async function doRefresh(trigger: RefreshTrigger): Promise<RefreshReport> {
   if (trigger === "cron") {
     const cfg = getRefreshPolicyConfig();
     const attempts = await store.listCollectionAttempts(500);
-    const todayKey = localDateKey(new Date(), cfg.quietTimezone);
+    const nowD = new Date();
+    const todayKey = localDateKey(nowD, cfg.quietTimezone);
     const todaysActorRuns = attempts.filter(
-      (a) => localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === todayKey,
+      (a) =>
+        a.provider === "apify" &&
+        localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === todayKey,
     ).length;
+    const todaysSocialcrawlCredits = socialcrawlCreditsToday(attempts, nowD, cfg.quietTimezone).credits;
     const policy = decideScheduledRefresh({
       recentRuns: await store.listRefreshRuns(60),
       todaysActorRuns,
+      todaysSocialcrawlCredits,
       cfg,
     });
     if (policy.action === "skip") {

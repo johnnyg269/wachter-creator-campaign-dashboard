@@ -13,16 +13,20 @@
 // Pure functions + env-read config; unit tested.
 
 import type { RefreshRun, Video } from "./types";
+import { getSocialcrawlDailyCreditCap, isSocialcrawlEnabled } from "./config";
 
 export interface RefreshPolicyConfig {
   fullIntervalMin: number;
   lightIntervalMin: number;
   discoveryIntervalMin: number;
   commentsIntervalMin: number;
-  /** Full comment-detail (text) pull cadence — once per day by default. */
+  /** Full comment-detail (text) pull cadence — kept for the admin display. */
   commentDetailIntervalHours: number;
-  /** Local hour (0–23) the daily comment-detail pull is allowed at/after. */
+  /** First comment-detail window hour (back-compat / admin display). */
   commentDetailHour: number;
+  /** Local hours (0–23) the comment-detail pull is allowed at/after — one pull
+   * per window per day (e.g. [12, 18] = twice per active day). */
+  commentDetailWindows: number[];
   /** Timezone for the comment-detail day boundary + target hour. */
   commentDetailTimezone: string;
   enableLight: boolean;
@@ -31,6 +35,10 @@ export interface RefreshPolicyConfig {
   budgetTargetUsd: number;
   hardCapUsd: number;
   estCostPerRunUsd: number;
+  /** SocialCrawl primary mode (changes cadence default + budget basis). */
+  socialcrawlEnabled: boolean;
+  /** Daily SocialCrawl credit cap — scheduled refreshes stop when reached. */
+  socialcrawlDailyCreditCap: number;
   quietHoursEnabled: boolean;
   quietTimezone: string;
   /** Local hour the quiet window starts (inclusive), 0–23. */
@@ -60,37 +68,51 @@ function envHour(name: string, fallback: number): number {
 }
 
 export function getRefreshPolicyConfig(): RefreshPolicyConfig {
-  // Comments are secondary and expensive — pull full comment detail once per
-  // day, not every cycle. Views are primary and cheap (and free for YouTube
-  // via the Data API), so metrics refresh hourly with an optional 30-min hot
-  // tier; discovery (new-post hunting) drops to twice a day.
+  // SocialCrawl primary: metrics are cheap (3 credits/refresh) so the approved
+  // cadence is every 15 min during active hours. On Apify (fallback/legacy) the
+  // default stays 60 min to protect Apify cost. Comment detail runs twice per
+  // active day (12:00 + 18:00 ET). YouTube stays free via the Data API.
+  const scOn = isSocialcrawlEnabled();
   const commentDetailIntervalHours = envInt("COMMENT_DETAIL_REFRESH_INTERVAL_HOURS", 24);
+  const pullsPerDay = envInt("COMMENT_DETAIL_PULLS_PER_DAY", 2);
+  const w1 = envHour("COMMENT_DETAIL_PULL_1_ET", envHour("COMMENT_DETAIL_REFRESH_HOUR", 12));
+  const w2 = envHour("COMMENT_DETAIL_PULL_2_ET", 18);
+  const commentDetailWindows = (pullsPerDay >= 2 ? [w1, w2] : [w1])
+    .filter((h, i, a) => a.indexOf(h) === i)
+    .sort((a, b) => a - b);
   return {
-    fullIntervalMin: envInt("REFRESH_FULL_INTERVAL_MINUTES", 60),
+    // METRICS_REFRESH_INTERVAL_MINUTES (new) > REFRESH_FULL_INTERVAL_MINUTES
+    // (legacy) > default (15 on SocialCrawl, 60 on Apify).
+    fullIntervalMin: envInt(
+      "METRICS_REFRESH_INTERVAL_MINUTES",
+      envInt("REFRESH_FULL_INTERVAL_MINUTES", scOn ? 15 : 60),
+    ),
     lightIntervalMin: envInt("REFRESH_LIGHT_INTERVAL_MINUTES", 30),
     discoveryIntervalMin: envInt("REFRESH_DISCOVERY_INTERVAL_MINUTES", 720),
-    // Kept for the admin "comments next due" display; the real gate is the
-    // once-per-day comment-detail rule below.
     commentsIntervalMin: envInt("REFRESH_COMMENTS_INTERVAL_MINUTES", commentDetailIntervalHours * 60),
     commentDetailIntervalHours,
-    commentDetailHour: envHour("COMMENT_DETAIL_REFRESH_HOUR", 9),
+    commentDetailHour: commentDetailWindows[0] ?? 12,
+    commentDetailWindows,
     commentDetailTimezone:
       process.env.COMMENT_DETAIL_REFRESH_TIMEZONE ||
       process.env.REFRESH_QUIET_HOURS_TIMEZONE ||
       "America/New_York",
-    // Hot-video tier ON: views are now cheap enough to refresh hot videos every
-    // 30 min between hourly fulls. Budget cap still wins (checked first).
-    enableLight: envBool("ENABLE_LIGHT_REFRESH", true),
+    // On SocialCrawl every refresh is a cheap full sweep, so the light/hot tier
+    // is unnecessary; keep it on only in the Apify regime.
+    enableLight: envBool("ENABLE_LIGHT_REFRESH", !scOn),
     enableDiscovery: envBool("ENABLE_DISCOVERY_REFRESH", true),
     enableComments: envBool("ENABLE_COMMENT_REFRESH", true),
     budgetTargetUsd: envFloat("APIFY_DAILY_BUDGET_TARGET_USD", 2),
     hardCapUsd: envFloat("APIFY_DAILY_HARD_CAP_USD", 3),
-    // ~$20 observed across ~1,150 actor runs ≈ 1.7¢/run; 2¢ is conservative.
     estCostPerRunUsd: envFloat("APIFY_EST_COST_PER_RUN_USD", 0.02),
+    socialcrawlEnabled: scOn,
+    socialcrawlDailyCreditCap: getSocialcrawlDailyCreditCap(),
     quietHoursEnabled: envBool("REFRESH_QUIET_HOURS_ENABLED", true),
-    quietTimezone: process.env.REFRESH_QUIET_HOURS_TIMEZONE || "America/New_York",
-    quietStartHour: envHour("REFRESH_QUIET_HOURS_START", 0),
-    quietEndHour: envHour("REFRESH_QUIET_HOURS_END", 6),
+    quietTimezone:
+      process.env.QUIET_HOURS_TIMEZONE || process.env.REFRESH_QUIET_HOURS_TIMEZONE || "America/New_York",
+    // Approved quiet hours: 12:00 AM – 7:00 AM ET (end hour moved 6 → 7).
+    quietStartHour: envHour("QUIET_HOURS_START_ET", envHour("REFRESH_QUIET_HOURS_START", 0)),
+    quietEndHour: envHour("QUIET_HOURS_END_ET", envHour("REFRESH_QUIET_HOURS_END", 7)),
   };
 }
 
@@ -187,17 +209,20 @@ export function isCommentDetailDue(
   cfg: RefreshPolicyConfig,
 ): boolean {
   if (!cfg.enableComments) return false;
-  // Wait until the daily target hour (e.g. 9:00 AM ET).
-  if (localHour(now, cfg.commentDetailTimezone) < cfg.commentDetailHour) return false;
-  // At most once per local calendar day: if comment detail already ran today,
-  // it's not due again.
+  const tz = cfg.commentDetailTimezone;
+  const h = localHour(now, tz);
+  const today = localDateKey(now, tz);
+  // The most recent comment-detail window whose start hour has passed today
+  // (e.g. windows [12, 18] → at 13:00 the open window is 12; at 19:00 it's 18).
+  const open = cfg.commentDetailWindows.filter((w) => h >= w).sort((a, b) => b - a)[0];
+  if (open === undefined) return false; // before the first window today
+  // One pull per window per day: if comment detail already ran at/after this
+  // window's start today, it's already done.
   const lastAt = lastSuccessfulWhere(recentRuns, (m) => m.comments);
-  if (
-    lastAt &&
-    localDateKey(new Date(lastAt), cfg.commentDetailTimezone) ===
-      localDateKey(now, cfg.commentDetailTimezone)
-  ) {
-    return false;
+  if (lastAt) {
+    const lastDate = localDateKey(new Date(lastAt), tz);
+    const lastHour = localHour(new Date(lastAt), tz);
+    if (lastDate === today && lastHour >= open) return false;
   }
   return true;
 }
@@ -210,6 +235,8 @@ export function decideScheduledRefresh(args: {
   now?: Date;
   recentRuns: RefreshRun[];
   todaysActorRuns: number;
+  /** SocialCrawl credits used today (for the credit cap when SocialCrawl is on). */
+  todaysSocialcrawlCredits?: number;
   cfg?: RefreshPolicyConfig;
 }): ScheduledDecision {
   const now = args.now ?? new Date();
@@ -223,13 +250,27 @@ export function decideScheduledRefresh(args: {
     };
   }
 
-  const estSpend = args.todaysActorRuns * cfg.estCostPerRunUsd;
-  if (estSpend >= cfg.hardCapUsd) {
-    return {
-      action: "skip",
-      kind: "budget",
-      reason: `Skipped: estimated Apify spend today ($${estSpend.toFixed(2)}) reached the daily hard cap ($${cfg.hardCapUsd.toFixed(2)})`,
-    };
+  // Budget cap. On SocialCrawl the basis is daily credits; on Apify it's the
+  // estimated USD spend. Either way, scheduled refreshes stop when reached and
+  // last-known-good is preserved.
+  if (cfg.socialcrawlEnabled) {
+    const credits = args.todaysSocialcrawlCredits ?? 0;
+    if (credits >= cfg.socialcrawlDailyCreditCap) {
+      return {
+        action: "skip",
+        kind: "budget",
+        reason: `Skipped: SocialCrawl daily credit cap reached (${credits}/${cfg.socialcrawlDailyCreditCap})`,
+      };
+    }
+  } else {
+    const estSpend = args.todaysActorRuns * cfg.estCostPerRunUsd;
+    if (estSpend >= cfg.hardCapUsd) {
+      return {
+        action: "skip",
+        kind: "budget",
+        reason: `Skipped: estimated Apify spend today ($${estSpend.toFixed(2)}) reached the daily hard cap ($${cfg.hardCapUsd.toFixed(2)})`,
+      };
+    }
   }
 
   const lastFullAt = lastSuccessfulWhere(args.recentRuns, (m) => !m.light);
@@ -262,6 +303,33 @@ export function decideScheduledRefresh(args: {
     kind: "not_due",
     reason: `Skipped: full refresh not due yet (next in ~${nextFullMin}m)`,
   };
+}
+
+/**
+ * SocialCrawl credit usage today, parsed from the collection-attempt log
+ * (no schema change — credits are encoded in inputDescription as "<n>cr").
+ * Cache hits cost 0 but still count as a call.
+ */
+export function socialcrawlCreditsToday(
+  attempts: Array<{ provider: string; inputDescription: string; capturedAt: string; success?: boolean }>,
+  now: Date,
+  tz: string,
+): { credits: number; calls: number; cached: number; failed: number } {
+  const today = localDateKey(now, tz);
+  let credits = 0;
+  let calls = 0;
+  let cached = 0;
+  let failed = 0;
+  for (const a of attempts) {
+    if (a.provider !== "socialcrawl") continue;
+    if (localDateKey(new Date(a.capturedAt), tz) !== today) continue;
+    calls++;
+    if (a.success === false) failed++;
+    const m = a.inputDescription.match(/(\d+)cr/);
+    credits += m ? Number(m[1]) : 1;
+    if (/cache:hit/.test(a.inputDescription)) cached++;
+  }
+  return { credits, calls, cached, failed };
 }
 
 // ── Hot / warm / cold video classification (light-refresh targeting) ──────

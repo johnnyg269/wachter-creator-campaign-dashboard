@@ -4,13 +4,21 @@
 //   APIFY token + actor    → ApifyProvider
 //   otherwise              → ManualProvider (with an explanatory status)
 
-import { getActorIdFromEnv, getApifyToken, getYouTubeApiKey, isMockMode } from "../config";
+import {
+  getActorIdFromEnv,
+  getApifyToken,
+  getYouTubeApiKey,
+  isMockMode,
+  metricsProviderFor,
+} from "../config";
 import type { Platform, ProviderConfig, SourceStatus } from "../types";
 import type { Store } from "../store/types";
 import { ApifyProvider } from "./apify-provider";
 import { ManualProvider } from "./manual-provider";
 import { MockProvider } from "./mock-provider";
 import { YouTubeApiProvider } from "./youtube-api-provider";
+import { SocialCrawlProvider } from "./socialcrawl-provider";
+import { FallbackProvider } from "./fallback-provider";
 import type { ProviderReadiness, SocialPlatformProvider } from "./types";
 
 export interface ResolvedProvider {
@@ -33,6 +41,16 @@ export async function resolveProvider(
   if (platform === "youtube" && getYouTubeApiKey()) {
     const provider = new YouTubeApiProvider();
     return { provider, readiness: provider.readiness(), config };
+  }
+
+  // SocialCrawl primary (TikTok/Instagram/Facebook) when enabled + selected,
+  // with Apify as a fallback ONLY when an actor is configured (cost gate).
+  if (platform !== "youtube" && metricsProviderFor(platform) === "socialcrawl") {
+    const primary = new SocialCrawlProvider(platform);
+    const hasApifyActor = Boolean(config?.actorId?.trim() || getActorIdFromEnv(platform));
+    const apifyFallback = getApifyToken() && hasApifyActor ? new ApifyProvider(platform, config) : null;
+    const provider = new FallbackProvider(primary, apifyFallback, apifyFallback !== null);
+    return { provider, readiness: primary.readiness(), config };
   }
 
   const hasActor = Boolean(config?.actorId?.trim() || getActorIdFromEnv(platform));

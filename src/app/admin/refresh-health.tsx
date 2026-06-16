@@ -19,6 +19,7 @@ import {
   isQuietHours,
   localDateKey,
   nextActiveTime,
+  socialcrawlCreditsToday,
   summarizeBudget,
 } from "@/lib/refresh-policy";
 import { getStore } from "@/lib/store";
@@ -58,6 +59,11 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
     (a) => localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === todayKey,
   ).length;
   const budget = summarizeBudget({ todaysActorRuns, now: nowDate, cfg });
+  const sc = socialcrawlCreditsToday(actorAttempts, nowDate, cfg.quietTimezone);
+  const scProjected =
+    sc.credits > 0 && cfg.socialcrawlEnabled
+      ? Math.round((sc.credits / Math.max(1, 24 - cfg.quietEndHour)) * (24 - (cfg.quietEndHour - cfg.quietStartHour)))
+      : sc.credits;
 
   // Mode bookkeeping from run logs.
   const successRuns = runs.filter((r) => r.status === "success" || r.status === "partial");
@@ -260,16 +266,28 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
         </div>
 
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat label="Apify cost today (est.)">
-            <span className={budget.capReached ? "text-negative" : budget.overTarget ? "text-warning" : "text-positive"}>
-              ${budget.estSpendUsd.toFixed(2)}
-            </span>
-            <span className="block text-[10px] font-normal text-muted-strong">
-              {budget.runsToday} actor runs · projected ${budget.projectedDayUsd.toFixed(2)}/day ·
-              target ${budget.targetUsd.toFixed(2)} · hard cap ${budget.hardCapUsd.toFixed(2)}
-              {budget.capReached && " — CAP REACHED, scheduled refreshes paused"}
-            </span>
-          </Stat>
+          {cfg.socialcrawlEnabled ? (
+            <Stat label="SocialCrawl credits today">
+              <span className={sc.credits >= cfg.socialcrawlDailyCreditCap ? "text-negative" : scProjected > cfg.socialcrawlDailyCreditCap ? "text-warning" : "text-positive"}>
+                {sc.credits}/{cfg.socialcrawlDailyCreditCap}
+              </span>
+              <span className="block text-[10px] font-normal text-muted-strong">
+                {sc.calls} calls · {sc.cached} cache hits · {sc.failed} failed · projected ~{scProjected}/day
+                {sc.credits >= cfg.socialcrawlDailyCreditCap && " — CAP REACHED, scheduled refreshes paused"}
+              </span>
+            </Stat>
+          ) : (
+            <Stat label="Apify cost today (est.)">
+              <span className={budget.capReached ? "text-negative" : budget.overTarget ? "text-warning" : "text-positive"}>
+                ${budget.estSpendUsd.toFixed(2)}
+              </span>
+              <span className="block text-[10px] font-normal text-muted-strong">
+                {budget.runsToday} actor runs · projected ${budget.projectedDayUsd.toFixed(2)}/day ·
+                target ${budget.targetUsd.toFixed(2)} · hard cap ${budget.hardCapUsd.toFixed(2)}
+                {budget.capReached && " — CAP REACHED, scheduled refreshes paused"}
+              </span>
+            </Stat>
+          )}
           <Stat label="Latest refresh mode">
             {lastMode ? (lastMode.light ? "Light (hot videos)" : "Full") : "Full (pre-policy)"}
             <span className="block text-[10px] font-normal text-muted-strong">
@@ -279,10 +297,12 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
             </span>
           </Stat>
           <Stat label="Comment detail">
-            Once/day at {String(cfg.commentDetailHour).padStart(2, "0")}:00 {cfg.commentDetailTimezone}
+            {cfg.commentDetailWindows.length}×/day at{" "}
+            {cfg.commentDetailWindows.map((w) => `${String(w).padStart(2, "0")}:00`).join(", ")}{" "}
+            {cfg.commentDetailTimezone}
             <span className="block text-[10px] font-normal text-muted-strong">
-              Full comment text pulled daily; metric-only refreshes skip comment add-ons. Counts
-              still update each refresh.
+              Detail (Facebook per-post engagement) pulled {cfg.commentDetailWindows.length}× per active
+              day; metric-only refreshes skip it. Counts still update each refresh.
             </span>
           </Stat>
           <Stat label="Metrics cadence">

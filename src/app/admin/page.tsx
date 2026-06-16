@@ -24,6 +24,7 @@ export const dynamic = "force-dynamic";
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
+  { id: "providers", label: "Metrics Providers" },
   { id: "youtube", label: "YouTube Provider" },
   { id: "facebook", label: "Facebook Views" },
   { id: "milestones", label: "Milestones" },
@@ -220,6 +221,66 @@ export default async function AdminPage() {
 
         <section id="automation">
           <RefreshHealthPanel runs={data.refreshRuns} />
+        </section>
+
+        <section id="providers">
+          <Card>
+            <CardHeader
+              title="Metrics providers"
+              subtitle="SocialCrawl is primary for TikTok / Instagram / Facebook; YouTube uses the official Data API; Apify is fallback only. Keys are never shown."
+            />
+            <CardBody className="space-y-3 text-xs">
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                {(["tiktok", "instagram", "facebook"] as const).map((p) => (
+                  <div key={p} className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-strong">{p}</div>
+                    <div className="mt-1 font-medium capitalize">
+                      {data.socialcrawl.providerByPlatform[p] === "socialcrawl" ? (
+                        <span className="text-positive">SocialCrawl</span>
+                      ) : (
+                        <span className="text-warning">Apify (fallback)</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-strong">youtube</div>
+                  <div className="mt-1 font-medium text-positive">YouTube Data API</div>
+                </div>
+              </div>
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                <ReadinessRow
+                  ok={data.socialcrawl.configured}
+                  warnOnly
+                  label={`SocialCrawl key: ${data.socialcrawl.configured ? "configured" : "not set"}`}
+                  detail={
+                    data.socialcrawl.enabled
+                      ? "Primary metrics provider is active"
+                      : "Add SOCIALCRAWL_API_KEY + SOCIALCRAWL_METRICS_ENABLED=true to activate"
+                  }
+                  tip="Server-only env var. The key value is never displayed or sent to the client."
+                />
+                <ReadinessRow
+                  ok={data.socialcrawl.creditsToday < data.socialcrawl.dailyCap}
+                  warnOnly
+                  label={`Credits today: ${data.socialcrawl.creditsToday}/${data.socialcrawl.dailyCap}`}
+                  detail={`${data.socialcrawl.calls} calls · ${data.socialcrawl.cached} cache hits · ${data.socialcrawl.failed} failed`}
+                />
+                <ReadinessRow
+                  ok={data.socialcrawl.apifyFallbackAvailable}
+                  warnOnly
+                  label={`Apify fallback: ${data.socialcrawl.apifyFallbackAvailable ? "available" : "not configured"}`}
+                  detail="Used only when SocialCrawl fails for a platform (cost-gated)."
+                />
+                <ReadinessRow
+                  ok={data.socialcrawl.facebookViewSource === "socialcrawl_public_plays"}
+                  warnOnly
+                  label={`Facebook views: ${data.socialcrawl.facebookViewSource === "socialcrawl_public_plays" ? "public Reel plays (SocialCrawl)" : "Apify viewsCount (proxy)"}`}
+                  detail="SocialCrawl returns the public Reel plays Apify's viewsCount undercounts."
+                />
+              </div>
+            </CardBody>
+          </Card>
         </section>
 
         <section id="youtube">

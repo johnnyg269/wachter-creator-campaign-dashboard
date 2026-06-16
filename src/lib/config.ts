@@ -31,6 +31,46 @@ export function isMockMode(): boolean {
   return process.env.MOCK_DATA === "1" || process.env.MOCK_DATA === "true";
 }
 
+// ---------------------------------------------------------------------------
+// SocialCrawl — primary metrics provider for TikTok/Instagram/Facebook when
+// enabled. Server-side only; the key is never exposed to the client and never
+// printed. YouTube always stays on the official YouTube Data API.
+// ---------------------------------------------------------------------------
+
+export function getSocialcrawlKey(): string | null {
+  const k = process.env.SOCIALCRAWL_API_KEY?.trim();
+  return k ? k : null;
+}
+
+/** Master switch + key presence. SocialCrawl is only "on" when both hold. */
+export function isSocialcrawlEnabled(): boolean {
+  const v = process.env.SOCIALCRAWL_METRICS_ENABLED;
+  const enabled = v === "1" || v?.toLowerCase() === "true";
+  return enabled && getSocialcrawlKey() !== null;
+}
+
+/**
+ * Which provider serves a non-YouTube platform's metrics. SocialCrawl only
+ * when it's enabled AND selected for that platform; otherwise Apify (the
+ * fallback / legacy default). YouTube is never routed here.
+ */
+export function metricsProviderFor(platform: Platform): "socialcrawl" | "apify" {
+  if (platform === "youtube") return "apify"; // n/a — YouTube uses the Data API
+  if (!isSocialcrawlEnabled()) return "apify";
+  const general = (process.env.NON_YOUTUBE_METRICS_PROVIDER ?? "apify").trim().toLowerCase();
+  if (platform === "facebook") {
+    const fb = (process.env.FACEBOOK_METRICS_PROVIDER ?? general).trim().toLowerCase();
+    return fb === "socialcrawl" ? "socialcrawl" : general === "socialcrawl" ? "socialcrawl" : "apify";
+  }
+  return general === "socialcrawl" ? "socialcrawl" : "apify";
+}
+
+/** Daily SocialCrawl credit cap — scheduled refreshes stop when reached. */
+export function getSocialcrawlDailyCreditCap(): number {
+  const n = Number(process.env.SOCIALCRAWL_DAILY_CREDIT_CAP);
+  return Number.isFinite(n) && n > 0 ? n : 300;
+}
+
 /**
  * Instagram share-count add-on. The apify/instagram-reel-scraper fetches a
  * share count only when `includeSharesCount` is set, which adds per-reel work.
