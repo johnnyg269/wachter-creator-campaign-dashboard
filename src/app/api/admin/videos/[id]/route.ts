@@ -6,6 +6,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getStore } from "@/lib/store";
 import type { Video, VideoStatus } from "@/lib/types";
 import { isReviewCandidate } from "@/lib/eligibility";
+import { mergeThumbIntoRaw } from "@/lib/thumbnail-state";
 import {
   asTrimmedString,
   badRequest,
@@ -125,6 +126,19 @@ export async function PATCH(
         patch.status = status as VideoStatus;
         changes.push({ field: "status", oldValue: video.status, newValue: status });
       }
+    }
+
+    // An admin-set thumbnail is "manual" — mark it so the discovery thumbnail
+    // retry never auto-overwrites it with a provider value.
+    if (typeof patch.thumbnailUrl === "string" && patch.thumbnailUrl) {
+      patch.rawJson = mergeThumbIntoRaw(video.rawJson, {
+        status: "valid",
+        attempts: 0,
+        lastAttemptAt: new Date().toISOString(),
+        nextRetryAt: null,
+        failureReason: null,
+        resolvedFrom: "manual",
+      }) as Video["rawJson"];
     }
 
     if (changes.length === 0) {

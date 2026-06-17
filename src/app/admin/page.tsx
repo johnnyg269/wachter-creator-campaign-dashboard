@@ -260,7 +260,7 @@ export default async function AdminPage() {
                   <div className="text-[10px] uppercase tracking-wide text-muted-strong">Last run</div>
                   <div className="tabular">
                     {data.discovery.lastRun
-                      ? `added ${data.discovery.lastRun.added} · review ${data.discovery.lastRun.review} · ignored ${data.discovery.lastRun.ignored}`
+                      ? `added ${data.discovery.lastRun.added} · review ${data.discovery.lastRun.review} · ignored ${data.discovery.lastRun.ignored} · healed ${data.discovery.lastRun.healed}`
                       : "—"}
                   </div>
                 </div>
@@ -278,6 +278,50 @@ export default async function AdminPage() {
                   Possible new content
                 </div>
                 <ReviewCandidates items={data.reviewCandidates} />
+              </div>
+              <div>
+                <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-muted">
+                  Thumbnail status
+                </div>
+                {data.thumbnailIssues.length === 0 ? (
+                  <p className="text-xs text-muted">All tracked videos have a usable thumbnail.</p>
+                ) : (
+                  <div className="overflow-x-auto text-xs">
+                    <p className="mb-2 text-muted">
+                      {data.thumbnailIssues.length} video(s) without a usable thumbnail. Discovery
+                      retries up to 3 times, then keeps a clean placeholder — the video still shows.
+                    </p>
+                    <table className="w-full min-w-[640px] text-left">
+                      <thead className="text-[10px] uppercase tracking-wide text-muted-strong">
+                        <tr className="border-b border-border">
+                          <th className="py-1.5 pr-3 font-medium">Video</th>
+                          <th className="py-1.5 pr-3 font-medium">Platform</th>
+                          <th className="py-1.5 pr-3 font-medium">Status</th>
+                          <th className="py-1.5 pr-3 font-medium">Attempts</th>
+                          <th className="py-1.5 pr-3 font-medium">Last attempt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.thumbnailIssues.map((t) => (
+                          <tr key={t.videoId} className="border-b border-border/60 align-top">
+                            <td className="max-w-[240px] py-2 pr-3">
+                              <div className="truncate font-medium">{t.title ?? t.urlSlug}</div>
+                              <div className="truncate font-mono text-[10px] text-muted-strong">{t.urlSlug}</div>
+                            </td>
+                            <td className="py-2 pr-3">{t.platform}</td>
+                            <td className="py-2 pr-3">
+                              <span className={t.status === "failed" ? "text-negative" : "text-warning"}>{t.status}</span>
+                            </td>
+                            <td className="tabular py-2 pr-3">{t.attempts}/3</td>
+                            <td className="py-2 pr-3 text-muted">
+                              {t.lastAttemptAt ? <TimeAgo iso={t.lastAttemptAt} /> : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </CardBody>
           </Card>

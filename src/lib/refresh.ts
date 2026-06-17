@@ -24,9 +24,11 @@ import {
   campaignStartMs,
   classifyDiscoveryCandidate,
   isCampaignEligible,
+  isReviewCandidate,
   UNASSIGNED_EPISODE_NAME,
 } from "./eligibility";
 import { applyMonotonicViews, engagementRate } from "./metrics";
+import { mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
 import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./alerts";
@@ -518,7 +520,7 @@ async function refreshPlatform(
     const lookbackMs = getRefreshPolicyConfig().discoveryLookbackHours * 60 * 60 * 1000;
     const nowMs = Date.now();
     let unmatchedIgnored = 0;
-    const disc = { added: 0, review: 0, ignored: 0, reasons: {} as Record<string, number> };
+    const disc = { added: 0, review: 0, ignored: 0, healed: 0, reasons: {} as Record<string, number> };
     const seenNew = new Set<string>();
     const groups = new Map<string, { merged: NormalizedVideo; commentKeys: Set<string> }>();
     const addToGroup = (gkey: string, n: NormalizedVideo) => {
@@ -541,10 +543,38 @@ async function refreshPlatform(
         n.externalVideoId,
       );
       if (existing) {
-        // Tracked + eligible → metrics update; tracked-but-ineligible /
-        // quarantined / pending-review → skip (never re-add or re-count).
-        if (eligibleTrackedIds.has(existing.id)) addToGroup(`v:${existing.id}`, n);
-        else unmatchedIgnored++;
+        if (eligibleTrackedIds.has(existing.id)) {
+          addToGroup(`v:${existing.id}`, n); // tracked + eligible → metrics update
+        } else {
+          // Tracked but currently EXCLUDED (corrupt/Jan-1970 date, admin-hidden,
+          // or a pending review candidate). If the provider now confirms a valid
+          // eligible date, HEAL it (fix date, un-hide, clear review flag) so a
+          // real campaign video stops being invisible — this is why a record can
+          // be "already tracked" yet absent from every view. Genuine pre-campaign
+          // / ineligible content stays excluded.
+          const nInput = {
+            platform,
+            originalUrl: n.originalUrl,
+            publishedAt: n.publishedAt,
+            isSeed: false,
+            episodeGroupId: null as string | null,
+          };
+          const canHeal = isReviewCandidate(existing)
+            ? // a review candidate only auto-promotes once it clearly qualifies for auto-add (<=72h)
+              classifyDiscoveryCandidate(
+                { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
+                { startMs, lookbackMs, now: nowMs },
+              ).decision === "add"
+            : // any other excluded record heals on a valid eligible provider date (>= start)
+              isCampaignEligible(nInput, startMs, null);
+          if (canHeal) {
+            await healExistingVideo(store, existing, n);
+            disc.healed++;
+            addToGroup(`v:${existing.id}`, n);
+          } else {
+            unmatchedIgnored++;
+          }
+        }
         continue;
       }
       // Unmatched (not yet tracked).
@@ -578,9 +608,11 @@ async function refreshPlatform(
     if (mode.discovery) {
       const reasons = Object.entries(disc.reasons).map(([k, v]) => `${k}=${v}`).join(",");
       log.push(
-        `${platform}: discovery — added:${disc.added} review:${disc.review} ignored:${disc.ignored}` +
+        `${platform}: discovery — added:${disc.added} review:${disc.review} ignored:${disc.ignored} healed:${disc.healed}` +
           (reasons ? ` · ${reasons}` : ""),
       );
+    } else if (disc.healed > 0) {
+      log.push(`${platform}: healed ${disc.healed} stale/excluded record(s) with a valid provider date`);
     }
     if (unmatchedIgnored > 0) {
       log.push(
@@ -604,7 +636,7 @@ async function refreshPlatform(
     }
 
     for (const { merged: n, commentKeys } of groups.values()) {
-      const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out);
+      const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out, mode.discovery);
       if (!video) continue;
 
       // Public view counts are monotonic — a LOWER reading than the last
@@ -734,6 +766,31 @@ async function refreshPlatform(
 }
 
 /**
+ * Repair an existing tracked record that was wrongly EXCLUDED (corrupt/Jan-1970
+ * publishedAt, admin-hidden, or a stale review flag) once the provider confirms a
+ * valid eligible date. Fixes the date, un-hides it, clears the review flag, and
+ * refreshes basic metadata — so a real campaign video that was "already tracked"
+ * but invisible re-enters all totals. Never used for genuine pre-campaign content
+ * (the caller gates on eligibility).
+ */
+async function healExistingVideo(store: Store, existing: Video, n: NormalizedVideo): Promise<Video> {
+  const rawObj = n.rawJson && typeof n.rawJson === "object" ? { ...(n.rawJson as Record<string, unknown>) } : {};
+  delete rawObj.discoveryReview;
+  delete rawObj.discoveryReviewReason;
+  return store.updateVideo(existing.id, {
+    publishedAt: n.publishedAt ?? existing.publishedAt,
+    hidden: false,
+    status: "active",
+    sourceStatus: "live",
+    errorMessage: null,
+    title: existing.title ?? n.title,
+    caption: n.caption ?? existing.caption,
+    thumbnailUrl: n.thumbnailUrl ?? existing.thumbnailUrl,
+    rawJson: rawObj as Video["rawJson"],
+  });
+}
+
+/**
  * Insert a newly DISCOVERED campaign video. review=true persists it hidden +
  * flagged (rawJson.discoveryReview) so it stays out of every public total until
  * an admin promotes it from the "Possible new content" queue; review=false adds
@@ -781,6 +838,7 @@ async function upsertFetchedVideo(
   profileId: string | null,
   n: NormalizedVideo,
   out: RefreshReport["platforms"][number],
+  isDiscovery = false,
 ): Promise<Video | null> {
   if (!n.originalUrl && !n.externalVideoId) return null;
   const existing = await store.findVideoByUrlOrExternalId(
@@ -791,18 +849,27 @@ async function upsertFetchedVideo(
   const now = new Date().toISOString();
 
   if (existing) {
+    // Thumbnail retry: keep last-known-good / manual thumbnails, retry missing
+    // ones on discovery pulls only, cap attempts so we never retry forever.
+    const ts = nextThumbnailState({
+      resolvedUrl: n.thumbnailUrl,
+      existingUrl: existing.thumbnailUrl,
+      prev: readThumbState(existing.rawJson),
+      isDiscovery,
+      now,
+    });
     return store.updateVideo(existing.id, {
       // Never clobber admin overrides or known values with nulls.
       title: existing.title ?? n.title,
       caption: n.caption ?? existing.caption,
-      thumbnailUrl: n.thumbnailUrl ?? existing.thumbnailUrl,
+      thumbnailUrl: ts.thumbnailUrl,
       publishedAt: existing.publishedAt ?? n.publishedAt,
       externalVideoId: existing.externalVideoId ?? n.externalVideoId,
       lastRefreshedAt: now,
       status: "active",
       sourceStatus: "live",
       errorMessage: null,
-      rawJson: n.rawJson ?? existing.rawJson,
+      rawJson: mergeThumbIntoRaw(n.rawJson ?? existing.rawJson, ts.thumb) as Video["rawJson"],
     });
   }
 

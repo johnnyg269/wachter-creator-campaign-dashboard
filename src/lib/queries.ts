@@ -72,6 +72,7 @@ import {
   nextActiveTime,
   socialcrawlCreditsToday,
 } from "./refresh-policy";
+import { readThumbState } from "./thumbnail-state";
 import { resolveViews } from "./apify/view-resolver";
 import {
   campaignStartMs,
@@ -1002,6 +1003,8 @@ export interface AdminPageData {
   /** "Possible new content" — discovered-but-uncertain candidates pending an
    *  admin decision; not counted in any total until promoted. */
   reviewCandidates: QuarantinedVideoDiag[];
+  /** Videos whose thumbnail is missing/pending-retry/failed (admin visibility). */
+  thumbnailIssues: ThumbnailIssue[];
   /** SocialCrawl provider status + credit usage (admin-only, never the key). */
   socialcrawl: SocialcrawlAdminStatus;
   /** YouTube provider health — API vs Apify fallback (never the key value). */
@@ -1052,6 +1055,18 @@ export interface FacebookDiagnostic {
   duplicateCandidateIds: string[];
 }
 
+export interface ThumbnailIssue {
+  videoId: string;
+  platform: Platform;
+  title: string | null;
+  urlSlug: string;
+  /** valid | missing | retry_pending | failed | placeholder */
+  status: string;
+  attempts: number;
+  lastAttemptAt: string | null;
+  failureReason: string | null;
+}
+
 export interface DiscoveryStatus {
   enabled: boolean;
   cadenceHours: number;
@@ -1060,7 +1075,7 @@ export interface DiscoveryStatus {
   nextPullAt: string | null;
   quietHours: boolean;
   /** Candidate counts from the most recent discovery run (parsed from its log). */
-  lastRun: { at: string; added: number; review: number; ignored: number } | null;
+  lastRun: { at: string; added: number; review: number; ignored: number; healed: number } | null;
   pendingReview: number;
 }
 
@@ -1289,16 +1304,18 @@ export async function getAdminPageData(): Promise<AdminPageData> {
   if (lastDiscRun) {
     let added = 0,
       review = 0,
-      ignored = 0;
+      ignored = 0,
+      healed = 0;
     for (const line of lastDiscRun.rawLog ?? []) {
-      const m = line.match(/discovery — added:(\d+) review:(\d+) ignored:(\d+)/);
+      const m = line.match(/discovery — added:(\d+) review:(\d+) ignored:(\d+)(?: healed:(\d+))?/);
       if (m) {
         added += Number(m[1]);
         review += Number(m[2]);
         ignored += Number(m[3]);
+        healed += Number(m[4] ?? 0);
       }
     }
-    lastRunCounts = { at: lastDiscRun.startedAt, added, review, ignored };
+    lastRunCounts = { at: lastDiscRun.startedAt, added, review, ignored, healed };
   }
   const cadenceMin = policyCfg.discoveryIntervalMin;
   const lastPullAt = lastDiscRun?.startedAt ?? null;
@@ -1316,6 +1333,22 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     lastRun: lastRunCounts,
     pendingReview: reviewCandidates.length,
   };
+
+  // Thumbnail retry visibility — videos still missing a usable thumbnail.
+  const thumbnailIssues: ThumbnailIssue[] = (await store.listVideos({ includeHidden: true }))
+    .filter((v) => !v.hidden && !isReviewCandidate(v))
+    .map((v) => ({ v, t: readThumbState(v.rawJson) }))
+    .filter(({ v, t }) => t.status === "retry_pending" || t.status === "failed" || (!v.thumbnailUrl && t.status !== "valid"))
+    .map(({ v, t }) => ({
+      videoId: v.id,
+      platform: v.platform,
+      title: v.title ?? v.caption ?? null,
+      urlSlug: (v.originalUrl ?? "").replace(/^https?:\/\/[^/]+/, "").slice(0, 60),
+      status: t.status,
+      attempts: t.attempts,
+      lastAttemptAt: t.lastAttemptAt,
+      failureReason: t.failureReason,
+    }));
 
   const allAttempts = (await store.listCollectionAttempts(200)).sort((a, b) =>
     b.capturedAt.localeCompare(a.capturedAt),
@@ -1422,6 +1455,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     quarantinedVideos,
     discovery,
     reviewCandidates,
+    thumbnailIssues,
     socialcrawl,
     youtubeProvider,
     readiness: {

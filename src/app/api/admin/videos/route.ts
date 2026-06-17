@@ -7,6 +7,14 @@ import { getStore } from "@/lib/store";
 import { ensureSeedData } from "@/lib/seed";
 import { resolveProvider } from "@/lib/providers/registry";
 import { parseVideoUrl, tiktokPublishedAtFromId } from "@/lib/url-parse";
+import type { Video } from "@/lib/types";
+import {
+  campaignStartMs,
+  ineligibilityReason,
+  isCampaignEligible,
+  isReviewCandidate,
+  UNASSIGNED_EPISODE_NAME,
+} from "@/lib/eligibility";
 import {
   asTrimmedString,
   badRequest,
@@ -44,8 +52,68 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       parsed.externalVideoId,
     );
     if (existing) {
+      const startMs = campaignStartMs();
+      const eps = await store.listEpisodeGroups();
+      const unassignedId = eps.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
+      const review = isReviewCandidate(existing);
+      const eligInput = (publishedAt: string | null) => ({
+        platform: parsed.platform,
+        originalUrl: existing.originalUrl,
+        publishedAt,
+        isSeed: false,
+        episodeGroupId: null as string | null,
+      });
+      const visible = !existing.hidden && !review && isCampaignEligible(existing, startMs, unassignedId);
+      if (visible) {
+        return NextResponse.json(
+          { ok: false, state: "visible", videoId: existing.id, error: "This video is already tracked and visible in the campaign." },
+          { status: 409 },
+        );
+      }
+      // Hidden / excluded / review / corrupt-date: don't dead-end — restore it if
+      // it's a valid campaign video. Keep its existing eligible date, else derive
+      // the TikTok publish date from the snowflake id, else leave as-is.
+      const existingDateOk = Boolean(existing.publishedAt) && isCampaignEligible(eligInput(existing.publishedAt), startMs, null);
+      const derived = parsed.platform === "tiktok" && parsed.externalVideoId ? tiktokPublishedAtFromId(parsed.externalVideoId) : null;
+      const restoreDate = existingDateOk ? existing.publishedAt : derived;
+      const eligibleAfter = Boolean(restoreDate) && isCampaignEligible(eligInput(restoreDate), startMs, null);
+      if (eligibleAfter) {
+        const rawObj = existing.rawJson && typeof existing.rawJson === "object" ? { ...(existing.rawJson as Record<string, unknown>) } : {};
+        delete rawObj.discoveryReview;
+        delete rawObj.discoveryReviewReason;
+        const restored = await store.updateVideo(existing.id, {
+          hidden: false,
+          status: "active",
+          sourceStatus: "live",
+          errorMessage: null,
+          publishedAt: restoreDate,
+          rawJson: rawObj as Video["rawJson"],
+        });
+        await store.addOverride({
+          entityType: "video",
+          entityId: existing.id,
+          field: "restored",
+          oldValue: review ? "review" : existing.hidden ? "hidden" : "excluded",
+          newValue: "active",
+          reason: "manual add matched an existing hidden/excluded record — restored",
+        });
+        return NextResponse.json({
+          ok: true,
+          restored: true,
+          video: restored,
+          message: "This video already existed but was hidden/excluded — restored to active campaign tracking. Metrics and thumbnail refresh on the next pull.",
+        });
+      }
+      // Genuinely out-of-campaign (e.g. published before the campaign start).
+      const why = ineligibilityReason(eligInput(existing.publishedAt), startMs, null);
       return NextResponse.json(
-        { ok: false, error: "This video is already tracked" },
+        {
+          ok: false,
+          state: "excluded",
+          videoId: existing.id,
+          reason: why,
+          error: `This video already exists but is out-of-campaign (${why ?? "ineligible"}); it stays excluded. Adjust the campaign start or the record in admin to include it.`,
+        },
         { status: 409 },
       );
     }
