@@ -1,6 +1,7 @@
-// TikTok thumbnail resolver (SocialCrawl covers + HEIC proxy transcode) and the
-// executive visual-polish changes (centered alerts badge, board-friendly Exec
-// Summary, non-overflowing Growth-by-Platform card).
+// TikTok thumbnail resolver (SocialCrawl covers, stored as valid_unverified and
+// rendered directly in the browser) and the executive visual-polish changes
+// (centered alerts badge, board-friendly Exec Summary, non-overflowing
+// Growth-by-Platform card).
 
 import { readFileSync } from "fs";
 import path from "path";
@@ -42,14 +43,18 @@ describe("SocialCrawl TikTok thumbnail resolver", () => {
     expect((await run()).thumbnailUrl).toBe("https://p16.tiktokcdn-us.com/cover.jpg");
   });
 
-  it("rejects HEIC covers (browser-unrenderable) → null, keeping last-known-good", async () => {
+  it("STORES HEIC covers (browser tries to render; not rejected by format)", async () => {
+    // We no longer reject by image format — the URL is stored and rendered
+    // directly; refresh marks TikTok-CDN URLs valid_unverified and the UI falls
+    // back to a branded placeholder via onError if the browser can't decode it.
     stub({ ...base, content: { thumbnail_url: "https://cdn.tiktokcdn-us.com/x.heic?sig=1" } });
-    expect((await run()).thumbnailUrl).toBeNull();
+    expect((await run()).thumbnailUrl).toBe("https://cdn.tiktokcdn-us.com/x.heic?sig=1");
   });
 
-  it("rejects the TikTok ~tplv .heic template cover", async () => {
-    stub({ ...base, content: { thumbnail_url: "https://p16-common-sign.tiktokcdn-us.com/abc~tplv-tiktokx-cropcenter:300:400.heic?dr=9&x-signature=z" } });
-    expect((await run()).thumbnailUrl).toBeNull();
+  it("STORES the TikTok ~tplv .heic template cover (valid-looking URL)", async () => {
+    const tplv = "https://p16-common-sign.tiktokcdn-us.com/abc~tplv-tiktokx-cropcenter:300:400.heic?dr=9&x-signature=z";
+    stub({ ...base, content: { thumbnail_url: tplv } });
+    expect((await run()).thumbnailUrl).toBe(tplv);
   });
 
   it("falls back across cover fields when thumbnail_url is empty", async () => {
@@ -134,7 +139,8 @@ describe("TikTok thumbnail last-known-good (integration)", () => {
 // ── Source-level: HEIC proxy transcode + visual polish ────────────────────────
 describe("thumbnail proxy", () => {
   // TikTok's signed CDN blocks datacenter fetches, so server-side transcode is
-  // not viable — we don't depend on sharp; HEIC covers are rejected upstream.
+  // not viable — we don't depend on sharp. HEIC covers are stored and rendered
+  // directly by the browser (valid_unverified), with a placeholder fallback.
   it("does not depend on sharp / HEIC transcode", () => {
     expect(read("src/app/api/thumb/route.ts")).not.toContain("sharp");
     expect(read("package.json")).not.toMatch(/"sharp"\s*:/);

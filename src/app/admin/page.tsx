@@ -371,10 +371,14 @@ export default async function AdminPage() {
                   detail={`${data.socialcrawl.calls} calls · ${data.socialcrawl.cached} cache hits · ${data.socialcrawl.failed} failed`}
                 />
                 <ReadinessRow
-                  ok={data.socialcrawl.apifyFallbackAvailable}
+                  ok={!data.socialcrawl.apifyFallbackEnabled}
                   warnOnly
-                  label={`Apify fallback: ${data.socialcrawl.apifyFallbackAvailable ? "available" : "not configured"}`}
-                  detail="Used only when SocialCrawl fails for a platform (cost-gated)."
+                  label={`Apify fallback: ${data.socialcrawl.apifyFallbackEnabled ? "ENABLED" : "disabled"}`}
+                  detail={
+                    data.socialcrawl.apifyFallbackEnabled
+                      ? `Allowed under daily caps · ${data.socialcrawl.apifyCallsToday} call(s) today (~$${data.socialcrawl.apifyEstSpendToday.toFixed(2)})`
+                      : `Off by default — SocialCrawl failures keep last-known-good. ${data.socialcrawl.apifyCallsToday} Apify call(s) today (~$${data.socialcrawl.apifyEstSpendToday.toFixed(2)}).`
+                  }
                 />
                 <ReadinessRow
                   ok={data.socialcrawl.facebookViewSource === "socialcrawl_public_plays"}

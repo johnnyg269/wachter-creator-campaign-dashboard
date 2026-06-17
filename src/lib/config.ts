@@ -12,6 +12,39 @@ export function getApifyToken(): string | null {
   return t ? t : null;
 }
 
+// ---------------------------------------------------------------------------
+// Apify spend controls. SocialCrawl is the primary provider now (credits bulk-
+// purchased), so Apify is OFF by default — it only runs as an emergency fallback
+// when EXPLICITLY enabled AND both daily caps are > 0. With the defaults below
+// (disabled, caps 0) Apify is never called in normal operation; a SocialCrawl
+// failure preserves last-known-good instead of falling back.
+// ---------------------------------------------------------------------------
+
+export function isApifyFallbackEnabled(): boolean {
+  const v = process.env.APIFY_FALLBACK_ENABLED;
+  return v === "1" || v?.toLowerCase() === "true"; // default: false
+}
+
+export function getApifyDailySpendCapUsd(): number {
+  const n = Number(process.env.APIFY_DAILY_SPEND_CAP_USD);
+  return Number.isFinite(n) && n >= 0 ? n : 0; // default: 0 (= off)
+}
+
+export function getApifyDailyRunCap(): number {
+  const n = Number(process.env.APIFY_DAILY_RUN_CAP);
+  return Number.isFinite(n) && n >= 0 ? n : 0; // default: 0 (= off)
+}
+
+/**
+ * Config-level gate: Apify fallback is permitted only when it's explicitly
+ * enabled AND both daily caps are positive. Any of {disabled, spend cap 0, run
+ * cap 0} → Apify is off. (Per-run daily-usage enforcement happens at refresh
+ * time where today's run count/spend is known.)
+ */
+export function apifyFallbackAllowedByConfig(): boolean {
+  return isApifyFallbackEnabled() && getApifyDailySpendCapUsd() > 0 && getApifyDailyRunCap() > 0;
+}
+
 export function getYouTubeApiKey(): string | null {
   const k = process.env.YOUTUBE_API_KEY?.trim();
   return k ? k : null;

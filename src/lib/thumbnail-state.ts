@@ -7,7 +7,13 @@
 // never retry forever, never overwrite a good/manual thumbnail, and never block a
 // valid video from being tracked just because its thumbnail is missing.
 
-export type ThumbnailStatus = "valid" | "missing" | "retry_pending" | "failed" | "placeholder";
+export type ThumbnailStatus =
+  | "valid"
+  | "valid_unverified"
+  | "missing"
+  | "retry_pending"
+  | "failed"
+  | "placeholder";
 
 export interface ThumbnailState {
   status: ThumbnailStatus;
@@ -49,22 +55,34 @@ export function nextThumbnailState(args: {
   prev: ThumbnailState;
   isDiscovery: boolean;
   now: string;
+  /** False when the URL's CDN can't be server-verified (e.g. TikTok blocks
+   *  Vercel fetches) — store it as valid_unverified and let the browser try. */
+  verifiable?: boolean;
 }): { thumbnailUrl: string | null; thumb: ThumbnailState } {
-  const { resolvedUrl, existingUrl, prev, isDiscovery, now } = args;
+  const { resolvedUrl, existingUrl, prev, isDiscovery, now, verifiable = true } = args;
 
   // Never auto-overwrite an admin-set (manual) thumbnail.
   if (prev.resolvedFrom === "manual" && existingUrl) {
     return { thumbnailUrl: existingUrl, thumb: prev };
   }
-  // Provider gave a usable thumbnail → use it, reset retry state.
+  // Provider gave a valid-looking thumbnail → store it. Mark valid_unverified
+  // when the CDN can't be server-checked (TikTok); the browser still renders it.
   if (resolvedUrl) {
     return {
       thumbnailUrl: resolvedUrl,
-      thumb: { status: "valid", attempts: 0, lastAttemptAt: now, nextRetryAt: null, failureReason: null, resolvedFrom: "provider" },
+      thumb: {
+        status: verifiable ? "valid" : "valid_unverified",
+        attempts: 0,
+        lastAttemptAt: now,
+        nextRetryAt: null,
+        failureReason: null,
+        resolvedFrom: "provider",
+      },
     };
   }
-  // No provider thumbnail this pull — keep the last-known-good one untouched.
-  if (existingUrl && prev.status === "valid") {
+  // No provider thumbnail this pull — keep a stored good/unverified one untouched
+  // (do NOT churn retries on valid_unverified; only truly-missing ones retry).
+  if (existingUrl && (prev.status === "valid" || prev.status === "valid_unverified")) {
     return { thumbnailUrl: existingUrl, thumb: prev };
   }
   // Retries exhausted — keep a clean placeholder, stop trying.
@@ -85,6 +103,34 @@ export function nextThumbnailState(args: {
       resolvedFrom: prev.resolvedFrom,
     },
   };
+}
+
+/**
+ * Initial thumb state for a brand-new video: a valid-looking URL is recorded
+ * immediately as valid / valid_unverified (TikTok) so it is NOT needlessly
+ * retried on the next discovery pull; a missing one starts as retry_pending.
+ */
+export function initialThumbState(args: {
+  thumbnailUrl: string | null;
+  now: string;
+  /** False when the CDN can't be server-verified (TikTok) → valid_unverified. */
+  verifiable?: boolean;
+}): { thumbnailUrl: string | null; thumb: ThumbnailState } {
+  return nextThumbnailState({
+    resolvedUrl: args.thumbnailUrl,
+    existingUrl: null,
+    prev: {
+      status: "missing",
+      attempts: 0,
+      lastAttemptAt: null,
+      nextRetryAt: null,
+      failureReason: null,
+      resolvedFrom: null,
+    },
+    isDiscovery: false,
+    now: args.now,
+    verifiable: args.verifiable,
+  });
 }
 
 /** Merge a thumb state into a rawJson object without losing the provider payload. */

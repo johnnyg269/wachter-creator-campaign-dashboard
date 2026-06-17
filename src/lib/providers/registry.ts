@@ -5,6 +5,7 @@
 //   otherwise              → ManualProvider (with an explanatory status)
 
 import {
+  apifyFallbackAllowedByConfig,
   getActorIdFromEnv,
   getApifyToken,
   getYouTubeApiKey,
@@ -30,6 +31,9 @@ export interface ResolvedProvider {
 export async function resolveProvider(
   platform: Platform,
   store: Store,
+  /** Runtime override: whether Apify may run right now (config gate + today's
+   *  cap). Defaults to the config-only gate (used by health/status display). */
+  apifyAllowedOverride?: boolean,
 ): Promise<ResolvedProvider> {
   if (isMockMode()) {
     const provider = new MockProvider(platform);
@@ -37,24 +41,27 @@ export async function resolveProvider(
   }
 
   const config = await store.getProviderConfig(platform);
+  const apifyAllowed = apifyAllowedOverride ?? apifyFallbackAllowedByConfig();
 
   if (platform === "youtube" && getYouTubeApiKey()) {
     const provider = new YouTubeApiProvider();
     return { provider, readiness: provider.readiness(), config };
   }
 
-  // SocialCrawl primary (TikTok/Instagram/Facebook) when enabled + selected,
-  // with Apify as a fallback ONLY when an actor is configured (cost gate).
+  // SocialCrawl primary (TikTok/Instagram/Facebook) when enabled + selected.
+  // Apify is attached as a fallback ONLY when it's explicitly allowed (off by
+  // default) AND an actor is configured; otherwise a SocialCrawl failure
+  // preserves last-known-good rather than spending on Apify.
   if (platform !== "youtube" && metricsProviderFor(platform) === "socialcrawl") {
     const primary = new SocialCrawlProvider(platform);
     const hasApifyActor = Boolean(config?.actorId?.trim() || getActorIdFromEnv(platform));
-    const apifyFallback = getApifyToken() && hasApifyActor ? new ApifyProvider(platform, config) : null;
+    const apifyFallback = apifyAllowed && getApifyToken() && hasApifyActor ? new ApifyProvider(platform, config) : null;
     const provider = new FallbackProvider(primary, apifyFallback, apifyFallback !== null);
     return { provider, readiness: primary.readiness(), config };
   }
 
   const hasActor = Boolean(config?.actorId?.trim() || getActorIdFromEnv(platform));
-  if (getApifyToken() && hasActor) {
+  if (apifyAllowed && getApifyToken() && hasActor) {
     const provider = new ApifyProvider(platform, config);
     return { provider, readiness: provider.readiness(), config };
   }

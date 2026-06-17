@@ -86,20 +86,18 @@ function num(v: unknown): number | null {
 
 const VIDEO_FILE = /\.(mp4|m3u8|webm|mov|m4v)(\?|$)/i;
 const BAD_THUMB = /placeholder|default[_-]?avatar|no[_-]?image|blank\.|spacer\./i;
-// HEIC/HEIF aren't renderable by browsers and can't be reliably transcoded
-// server-side (TikTok's signed CDN blocks datacenter fetches), so reject them —
-// returning null keeps the existing last-known-good thumbnail instead.
-const HEIC_FORMAT = /tplv-[^/?]*\.heic|[?&]format=hei[cf]\b|\.hei[cf](\?|$)/i;
 
-/** A usable thumbnail is an https IMAGE URL the browser can render — never the
- *  video file, a placeholder, a HEIC/HEIF cover, an empty string, or a non-URL. */
+/** A usable thumbnail is a valid-looking https IMAGE URL — never the video file,
+ *  a placeholder, an empty string, or a non-URL. We do NOT reject by image format
+ *  (e.g. HEIC): the URL is stored and the browser attempts to render it, falling
+ *  back to the branded placeholder via onError. (TikTok HEIC covers are stored as
+ *  "valid_unverified" since the CDN blocks server-side verification.) */
 function usableThumb(u: unknown, videoUrl: string | null): u is string {
   if (typeof u !== "string") return false;
   const s = u.trim();
   if (!s || !/^https?:\/\//i.test(s)) return false;
   if (videoUrl && s === videoUrl) return false;
   if (VIDEO_FILE.test(s)) return false;
-  if (HEIC_FORMAT.test(s)) return false;
   if (BAD_THUMB.test(s)) return false;
   return true;
 }

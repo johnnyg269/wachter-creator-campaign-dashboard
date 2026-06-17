@@ -54,6 +54,7 @@ import {
 import { resolveAllProviders } from "./providers/registry";
 import { checkToken, type ApifyTokenStatus } from "./apify/client";
 import {
+  apifyFallbackAllowedByConfig,
   getAdminPassword,
   getApifyToken,
   getCronSecret,
@@ -69,6 +70,7 @@ import {
   decodeRunMode,
   getRefreshPolicyConfig,
   isQuietHours,
+  localDateKey,
   nextActiveTime,
   socialcrawlCreditsToday,
 } from "./refresh-policy";
@@ -1110,6 +1112,12 @@ export interface SocialcrawlAdminStatus {
   cached: number;
   failed: number;
   apifyFallbackAvailable: boolean;
+  /** Apify fallback explicitly enabled (off by default now SocialCrawl is primary). */
+  apifyFallbackEnabled: boolean;
+  /** Apify actor runs recorded today (should be 0 while disabled). */
+  apifyCallsToday: number;
+  /** Estimated Apify spend today (USD). */
+  apifyEstSpendToday: number;
   /** Active metrics provider per non-YouTube platform. */
   providerByPlatform: Record<"tiktok" | "instagram" | "facebook", "socialcrawl" | "apify">;
   /** Facebook view source for the public dashboard. */
@@ -1373,6 +1381,10 @@ export async function getAdminPageData(): Promise<AdminPageData> {
   const scTz = getRefreshPolicyConfig().quietTimezone;
   const scUsage = socialcrawlCreditsToday(allAttempts, new Date(), scTz);
   const fbProvider = metricsProviderFor("facebook");
+  const scTodayKey = localDateKey(new Date(), scTz);
+  const apifyCallsToday = allAttempts.filter(
+    (a) => a.provider === "apify" && localDateKey(new Date(a.capturedAt), scTz) === scTodayKey,
+  ).length;
   const socialcrawl: SocialcrawlAdminStatus = {
     configured: getSocialcrawlKey() !== null,
     enabled: isSocialcrawlEnabled(),
@@ -1382,6 +1394,9 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     cached: scUsage.cached,
     failed: scUsage.failed,
     apifyFallbackAvailable: getApifyToken() !== null,
+    apifyFallbackEnabled: apifyFallbackAllowedByConfig(),
+    apifyCallsToday,
+    apifyEstSpendToday: Math.round(apifyCallsToday * getRefreshPolicyConfig().estCostPerRunUsd * 100) / 100,
     providerByPlatform: {
       tiktok: metricsProviderFor("tiktok"),
       instagram: metricsProviderFor("instagram"),

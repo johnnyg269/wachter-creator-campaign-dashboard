@@ -28,7 +28,9 @@ import {
   UNASSIGNED_EPISODE_NAME,
 } from "./eligibility";
 import { applyMonotonicViews, engagementRate } from "./metrics";
-import { mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
+import { initialThumbState, mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
+import { isTikTokCdnHost } from "./thumb-proxy";
+import { apifyFallbackAllowedByConfig, getApifyDailyRunCap, getApifyDailySpendCapUsd } from "./config";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
 import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./alerts";
@@ -42,6 +44,23 @@ import {
 } from "./refresh-policy";
 
 const globalForRefresh = globalThis as unknown as { __wachterRefreshing?: Promise<RefreshReport> };
+
+/**
+ * Whether Apify may run RIGHT NOW: config must allow it (off by default) AND
+ * today's Apify usage must be under both the run and spend caps. Off by default →
+ * SocialCrawl failures preserve last-known-good instead of spending on Apify.
+ */
+async function apifyAllowedNow(store: Store): Promise<boolean> {
+  if (!apifyFallbackAllowedByConfig()) return false;
+  const cfg = getRefreshPolicyConfig();
+  const today = localDateKey(new Date(), cfg.quietTimezone);
+  const attempts = await store.listCollectionAttempts(500);
+  const runs = attempts.filter(
+    (a) => a.provider === "apify" && localDateKey(new Date(a.capturedAt), cfg.quietTimezone) === today,
+  ).length;
+  const spend = runs * cfg.estCostPerRunUsd;
+  return runs < getApifyDailyRunCap() && spend < getApifyDailySpendCapUsd();
+}
 
 /** A crashed refresh's lock expires after this — nothing blocks forever. */
 export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
@@ -294,8 +313,9 @@ async function doRefresh(
     errors: [],
   };
 
+  const apifyAllowed = await apifyAllowedNow(store);
   for (const platform of PLATFORMS) {
-    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode);
+    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode, apifyAllowed);
     report.platforms.push(platformReport);
     if (platformReport.status === "failed" && platformReport.reason) {
       report.errors.push(`${platform}: ${platformReport.reason}`);
@@ -373,6 +393,7 @@ async function refreshPlatform(
   log: string[],
   refreshRunId: string,
   mode: RunMode = { light: false, discovery: true, comments: true },
+  apifyAllowed = false,
 ): Promise<RefreshReport["platforms"][number]> {
   const out: RefreshReport["platforms"][number] = {
     platform,
@@ -384,7 +405,7 @@ async function refreshPlatform(
     newVideosDiscovered: 0,
   };
 
-  const { provider, readiness, config } = await resolveProvider(platform, store);
+  const { provider, readiness, config } = await resolveProvider(platform, store, apifyAllowed);
   out.providerType = provider.providerType;
 
   const profiles = (await store.listProfiles()).filter((p) => p.platform === platform);
@@ -807,6 +828,15 @@ async function insertDiscoveredVideo(
 ): Promise<Video> {
   const now = new Date().toISOString();
   const rawObj = n.rawJson && typeof n.rawJson === "object" ? (n.rawJson as Record<string, unknown>) : {};
+  // Seed the thumb state (valid / valid_unverified for TikTok) up front.
+  const initThumb = initialThumbState({
+    thumbnailUrl: n.thumbnailUrl,
+    now,
+    verifiable: !isTikTokCdnHost(n.thumbnailUrl),
+  });
+  const baseRaw = review
+    ? { ...rawObj, discoveryReview: true, discoveryReviewReason: reviewReason ?? "review" }
+    : (n.rawJson ?? null);
   return store.insertVideo({
     campaignId: campaign.id,
     platform,
@@ -815,7 +845,7 @@ async function insertDiscoveredVideo(
     externalVideoId: n.externalVideoId,
     title: n.title,
     caption: n.caption,
-    thumbnailUrl: n.thumbnailUrl,
+    thumbnailUrl: initThumb.thumbnailUrl,
     publishedAt: n.publishedAt,
     firstTrackedAt: now,
     lastRefreshedAt: review ? null : now,
@@ -825,9 +855,7 @@ async function insertDiscoveredVideo(
     errorMessage: null,
     hidden: review,
     isSeed: false,
-    rawJson: review
-      ? { ...rawObj, discoveryReview: true, discoveryReviewReason: reviewReason ?? "review" }
-      : n.rawJson,
+    rawJson: mergeThumbIntoRaw(baseRaw, initThumb.thumb) as Video["rawJson"],
   });
 }
 
@@ -857,6 +885,8 @@ async function upsertFetchedVideo(
       prev: readThumbState(existing.rawJson),
       isDiscovery,
       now,
+      // TikTok's CDN can't be server-verified (it blocks Vercel) → valid_unverified.
+      verifiable: !isTikTokCdnHost(n.thumbnailUrl),
     });
     return store.updateVideo(existing.id, {
       // Never clobber admin overrides or known values with nulls.
@@ -904,6 +934,13 @@ async function upsertFetchedVideo(
     return null;
   }
 
+  // Seed the thumb state so a valid-looking cover (incl. TikTok HEIC) is stored
+  // as valid / valid_unverified and not needlessly retried on the next pull.
+  const initThumb = initialThumbState({
+    thumbnailUrl: n.thumbnailUrl,
+    now,
+    verifiable: !isTikTokCdnHost(n.thumbnailUrl),
+  });
   const created = await store.insertVideo({
     campaignId: campaign.id,
     platform,
@@ -912,7 +949,7 @@ async function upsertFetchedVideo(
     externalVideoId: n.externalVideoId,
     title: n.title,
     caption: n.caption,
-    thumbnailUrl: n.thumbnailUrl,
+    thumbnailUrl: initThumb.thumbnailUrl,
     publishedAt: n.publishedAt,
     firstTrackedAt: now,
     lastRefreshedAt: now,
@@ -922,7 +959,7 @@ async function upsertFetchedVideo(
     errorMessage: null,
     hidden: false,
     isSeed: false,
-    rawJson: n.rawJson,
+    rawJson: mergeThumbIntoRaw(n.rawJson, initThumb.thumb) as Video["rawJson"],
   });
   out.newVideosDiscovered++;
   await emitNewVideoAlert(store, campaign, created);
