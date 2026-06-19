@@ -56,9 +56,14 @@ function slugOf(url: string | null): string {
 
 export async function repairMissingThumbnails(
   store: Store,
-  opts: { maxTotal?: number } = {},
+  opts: { maxTotal?: number; force?: boolean } = {},
 ): Promise<ThumbnailRepairResult> {
   const maxTotal = opts.maxTotal ?? DEFAULT_MAX;
+  // force=true (explicit admin "Repair now") also retries covers previously
+  // marked "failed" by the profile-based retry loop — the per-video DETAIL
+  // endpoint is a different source they may never have been tried against. The
+  // automatic/default path keeps the anti-churn skip so it never re-spends.
+  const force = opts.force ?? false;
   const ranAt = new Date().toISOString();
   const cfg = getRefreshPolicyConfig();
   const startMs = campaignStartMs();
@@ -117,10 +122,11 @@ export async function repairMissingThumbnails(
     }
     // Skip covers that already exhausted the retry cap at source — re-fetching
     // them spends a credit every run with no chance of recovery (matches the
-    // discovery thumbnail-retry backoff). Reported, but never billed.
+    // discovery thumbnail-retry backoff). An explicit force run overrides this
+    // (the detail endpoint is a source the profile-retry loop never tried).
     const prev = readThumbState(v.rawJson);
-    if (prev.status === "failed") {
-      fail("thumbnail unavailable at source after max retries");
+    if (!force && prev.status === "failed") {
+      fail("thumbnail unavailable at source after max retries (use Repair now to force a detail retry)");
       continue;
     }
     const { provider } = await providerFor(v.platform);

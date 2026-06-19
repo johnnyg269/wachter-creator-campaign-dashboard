@@ -29,7 +29,9 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const result = await repairMissingThumbnails(getStore());
+    // Explicit admin action → force a detail retry even on covers the
+    // profile-retry loop previously marked "failed".
+    const result = await repairMissingThumbnails(getStore(), { force: true });
     // Public pages are server-rendered on demand, but revalidate to be safe so
     // recovered covers show immediately on the next view.
     revalidatePath("/videos");

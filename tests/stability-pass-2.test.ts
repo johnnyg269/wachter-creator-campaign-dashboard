@@ -221,6 +221,24 @@ describe("repairMissingThumbnails (immediate, server-side)", () => {
     expect(res.failures.some((f) => f.slug.includes("exhausted") && /max retries/.test(f.reason))).toBe(true);
   });
 
+  it("force=true (explicit 'Repair now') retries a failed cover via the detail endpoint", async () => {
+    const store = getStore();
+    await ensureSeedData(store);
+    const v = await store.insertVideo({
+      campaignId: "c", platform: "facebook", profileId: null,
+      originalUrl: "https://www.facebook.com/reel/forced", externalVideoId: "forced",
+      title: "forced", caption: null, thumbnailUrl: null,
+      publishedAt: "2026-06-12T00:00:00.000Z", firstTrackedAt: "2026-06-12T00:00:00.000Z",
+      lastRefreshedAt: "2026-06-12T00:00:00.000Z", status: "active", episodeGroupId: null,
+      sourceStatus: "live", errorMessage: null, hidden: false, isSeed: false,
+      rawJson: { thumb: { status: "failed", attempts: 3, lastAttemptAt: null, nextRetryAt: null, failureReason: "x", resolvedFrom: null } } as never,
+    });
+    await repairMissingThumbnails(store, { force: true });
+    // The detail endpoint WAS tried, and the mock returns an fbcdn cover → recovered.
+    expect(calls.meta).toContain("https://www.facebook.com/reel/forced");
+    expect((await store.getVideo(v.id))?.thumbnailUrl).toBe("https://scontent.xx.fbcdn.net/fb.jpg");
+  });
+
   it("does not touch hidden / excluded videos", async () => {
     const store = getStore();
     await ensureSeedData(store);
@@ -248,6 +266,8 @@ describe("repair-thumbnails route is gated", () => {
     // No query-param secret (would leak into logs); fail-closed when unconfigured.
     expect(src).not.toMatch(/searchParams\.get\("secret"\)/);
     expect(src).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/);
+    // Manual "Repair now" forces a detail retry of previously-failed covers.
+    expect(src).toMatch(/force: true/);
   });
   it("the shared cron route is also header-only (no ?secret= leak)", () => {
     expect(read("src/app/api/cron/refresh/route.ts")).not.toMatch(/searchParams\.get\("secret"\)/);
