@@ -33,9 +33,15 @@ export const SCHEDULER: SchedulerInfo = {
 };
 
 /** Public wording thresholds: minutes since last successful refresh.
- * Derived from the full-refresh cadence (1.5× / 2.5×). */
-export const REFRESH_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 1.5;
-export const SCHEDULER_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 2.5;
+ *
+ * Tuned to the cadence so a SINGLE missed/slow tick is not cried as "delayed".
+ * On a 15-min cadence the data age normally oscillates 0→15 min; one skipped
+ * tick (a transient provider hiccup) pushes it to ~30 min before the next
+ * success heals it. The old 1.5× (22.5 min) threshold flagged that benign case
+ * (the spurious "delayed · 26m ago"). We now tolerate one full missed cycle
+ * (2× cadence + 3 min grace) and only flag the scheduler as behind at 3×. */
+export const REFRESH_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 2 + 3; // 33m @15
+export const SCHEDULER_DELAYED_AFTER_MIN = SCHEDULER.cadenceMinutes * 3 + 3; // 48m @15
 
 export type RefreshHealth = "healthy" | "delayed" | "failed" | "unknown";
 

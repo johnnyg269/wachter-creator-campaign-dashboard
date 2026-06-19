@@ -23,22 +23,34 @@ describe("scheduler metadata", () => {
     expect(SCHEDULER.jobName).toBe("Wachter Campaign Dashboard Refresh");
     expect(SCHEDULER.backup).toContain("GitHub Actions");
   });
-  it("public delay thresholds scale with the cadence (1.5x / 2.5x)", () => {
-    expect(REFRESH_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 1.5);
-    expect(SCHEDULER_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 2.5);
+  it("delay thresholds tolerate one missed tick (2x+3 / 3x+3 of the cadence)", () => {
+    // Loosened from 1.5x/2.5x: a single missed/slow 15-min tick pushes data age
+    // to ~30 min, which must NOT read as "delayed". 2x+3=33, 3x+3=48.
+    expect(REFRESH_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 2 + 3);
+    expect(SCHEDULER_DELAYED_AFTER_MIN).toBe(SCHEDULER.cadenceMinutes * 3 + 3);
+    expect(REFRESH_DELAYED_AFTER_MIN).toBeGreaterThan(30); // one missed tick is fine
   });
 });
 
 describe("computeRefreshHealth", () => {
   const NOW = new Date("2026-06-12T12:00:00.000Z");
   const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
-  it("healthy when the last success is within 1.5x the cadence", () => {
-    // 1.5 × 15-min cadence = 22.5 min; a 15-min-old success is well within.
+  it("healthy when the last success is within the delayed threshold", () => {
+    // A 15-min-old success is well within the 33-min threshold.
     expect(
       computeRefreshHealth({ lastSuccessAt: ago(15), lastAttemptStatus: "success", now: NOW }),
     ).toBe("healthy");
   });
-  it("delayed when the last success is older than 1.5x the cadence", () => {
+  it("a single missed tick (26m old) is still healthy — no spurious 'delayed'", () => {
+    // Regression guard: the old 22.5-min threshold flagged this benign case.
+    expect(
+      computeRefreshHealth({ lastSuccessAt: ago(26), lastAttemptStatus: "success", now: NOW }),
+    ).toBe("healthy");
+  });
+  it("delayed once genuinely behind (older than ~2 missed ticks)", () => {
+    expect(
+      computeRefreshHealth({ lastSuccessAt: ago(40), lastAttemptStatus: "success", now: NOW }),
+    ).toBe("delayed");
     expect(
       computeRefreshHealth({ lastSuccessAt: ago(120), lastAttemptStatus: "success", now: NOW }),
     ).toBe("delayed");

@@ -716,6 +716,83 @@ async function refreshPlatform(
       }
     }
 
+    // Tracked videos absent from this cycle's provider response keep their
+    // last-known-good (no snapshot is written, the chart carries it forward) —
+    // surface the count so admin can see when the source returned a partial set
+    // (e.g. SocialCrawl's Facebook profile endpoint only lists the ~10 most
+    // recent reels). This never zeroes or drops anything.
+    const matchedIds = new Set([...groups.keys()].map((k) => k.replace(/^v:/, "")));
+    // Only meaningful on a full profile sweep — a light cycle deliberately
+    // targets a hot subset, so "missing" there is expected, not a partial set.
+    const missingFromProvider = mode.light ? [] : videos.filter((v) => !matchedIds.has(v.id));
+    if (missingFromProvider.length > 0) {
+      log.push(
+        `${platform}: ${missingFromProvider.length} tracked video(s) not in this cycle's response — kept last-known-good (carried forward)`,
+      );
+    }
+
+    // Facebook thumbnail repair: the profile reels endpoint lists only the most
+    // recent ~10 reels, so older tracked reels can lack a cover. On DISCOVERY
+    // cycles only (never every 15-min metrics pull), fetch /facebook/post for a
+    // small, capped batch of active FB videos that still have no thumbnail —
+    // SocialCrawl only (NEVER Apify), bounded by MAX_THUMBNAIL_RETRIES so it
+    // never retries forever, and it never overwrites a good/last-known-good
+    // thumbnail (nextThumbnailState preserves those). The scheduler's daily
+    // credit cap stops the whole refresh before this runs when the cap is hit.
+    if (
+      platform === "facebook" &&
+      mode.discovery &&
+      provider.providerType !== "apify" &&
+      provider.getVideoMetadata
+    ) {
+      const MAX_FB_THUMB_REPAIR_PER_CYCLE = 5;
+      const needRepair = missingFromProvider
+        .filter((v) => !v.thumbnailUrl)
+        .filter((v) => readThumbState(v.rawJson).status !== "failed")
+        .slice(0, MAX_FB_THUMB_REPAIR_PER_CYCLE);
+      let repaired = 0;
+      for (const v of needRepair) {
+        const now2 = new Date().toISOString();
+        let detail: NormalizedVideo | null = null;
+        try {
+          detail = await provider.getVideoMetadata(v.originalUrl);
+        } catch {
+          detail = null;
+        }
+        const ts = nextThumbnailState({
+          resolvedUrl: detail?.thumbnailUrl ?? null,
+          existingUrl: v.thumbnailUrl,
+          prev: readThumbState(v.rawJson),
+          isDiscovery: true,
+          now: now2,
+          // fbcdn IS server-fetchable via the proxy, so a recovered FB cover is
+          // fully verifiable (unlike TikTok's datacenter-blocked CDN).
+          verifiable: !isTikTokCdnHost(detail?.thumbnailUrl),
+        });
+        await store.updateVideo(v.id, {
+          thumbnailUrl: ts.thumbnailUrl,
+          rawJson: mergeThumbIntoRaw(v.rawJson, ts.thumb) as Video["rawJson"],
+        });
+        await store.addCollectionAttempt({
+          refreshRunId,
+          platform,
+          provider: "socialcrawl",
+          actorId: null,
+          kind: "detail",
+          inputDescription: `socialcrawl facebook thumb-repair · 1cr · ${detail?.thumbnailUrl ? "recovered" : "none"}`,
+          success: Boolean(detail?.thumbnailUrl),
+          runId: null,
+          itemCount: detail?.thumbnailUrl ? 1 : 0,
+          error: detail?.thumbnailUrl ? null : "no thumbnail in detail response",
+          capturedAt: now2,
+        });
+        if (ts.thumbnailUrl && ts.thumb.status === "valid") repaired++;
+      }
+      if (needRepair.length > 0) {
+        log.push(`facebook: thumbnail repair — recovered ${repaired}/${needRepair.length} via detail endpoint`);
+      }
+    }
+
     if (profile) {
       await store.updateProfile(profile.id, {
         lastDiscoveredAt: capturedAt,

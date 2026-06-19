@@ -134,9 +134,28 @@ export interface TrendPoint {
 }
 
 /**
- * Aggregate trend across videos: for each time bucket, take each video's most
- * recent snapshot at/before the bucket end and sum. Buckets where no video has
- * any data yet yield null (gap in the chart, not a fake zero).
+ * Aggregate trend across videos: for each time bucket, carry forward each
+ * video's last-known-good value PER FIELD (newest non-null snapshot at/before
+ * the bucket) and sum. Buckets where no video has any data yet yield null
+ * (gap in the chart, not a fake zero).
+ *
+ * Per-field carry-forward — not "newest snapshot, then check null" — is what
+ * keeps the chart honest:
+ *  - Public view counts are monotonic; a lower/stale reading is rejected on
+ *    write and stored as views:null (the per-video display keeps the last
+ *    confirmed value via lastConfirmed). The aggregate must do the SAME, or a
+ *    single rejected reading would erase that video from the bucket and create
+ *    an artificial DROP (the Facebook steep-drop bug).
+ *  - A video missing from one refresh cycle simply has no new snapshot; its
+ *    last-known-good carries forward instead of vanishing.
+ *  - Engagement is a 5-component composite (likes+comments+shares+saves+
+ *    bookmarks); each component is carried forward INDEPENDENTLY so a cycle that
+ *    reports only some components (common on Facebook Reels, where likes/comments
+ *    arrive on the detail tier) never drops a previously confirmed component.
+ * Net effect: the final bucket equals the sum of each video's last-confirmed
+ * value = the platform/KPI total, and partial/missing cycles never dip the line.
+ * (The equals-KPI-total invariant assumes manual corrections are pinned — which
+ * they always are; see lastConfirmed's manual-TTL rule.)
  */
 export function aggregateTrend(
   snapshotsByVideo: Map<string, MetricSnapshot[]>,
@@ -157,16 +176,27 @@ export function aggregateTrend(
     let eng: number | null = null;
     let comments: number | null = null;
     for (const snaps of sortedByVideo.values()) {
-      let last: MetricSnapshot | null = null;
+      // Last-known-good per field, independently (comments doubles as both its
+      // own series and an engagement component).
+      let vLast: number | null = null;
+      let cLast: number | null = null;
+      let lkLast: number | null = null;
+      let shLast: number | null = null;
+      let svLast: number | null = null;
+      let bkLast: number | null = null;
       for (const s of snaps) {
-        if (s.capturedAt <= t) last = s;
-        else break;
+        if (s.capturedAt > t) break;
+        if (s.views !== null) vLast = s.views;
+        if (s.comments !== null) cLast = s.comments;
+        if (s.likes !== null) lkLast = s.likes;
+        if (s.shares !== null) shLast = s.shares;
+        if (s.saves !== null) svLast = s.saves;
+        if (s.bookmarks !== null) bkLast = s.bookmarks;
       }
-      if (!last) continue;
-      if (last.views !== null) views = (views ?? 0) + last.views;
-      if (last.comments !== null) comments = (comments ?? 0) + last.comments;
-      const e = engagements(last);
-      if (e !== null) eng = (eng ?? 0) + e;
+      if (vLast !== null) views = (views ?? 0) + vLast;
+      if (cLast !== null) comments = (comments ?? 0) + cLast;
+      const eLast = sumNullable([lkLast, cLast, shLast, svLast, bkLast]);
+      if (eLast !== null) eng = (eng ?? 0) + eLast;
     }
     points.push({ t, views, engagements: eng, comments });
   }
