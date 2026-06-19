@@ -370,7 +370,7 @@ describe("pipeline wiring (source-level)", () => {
   });
   it("public quiet-hours copy exists and public users still cannot refresh", () => {
     const note = read("src/components/ui/auto-refresh-note.tsx");
-    expect(note).toContain("Refresh paused overnight · resumes at 6:00 AM ET");
+    expect(note).toContain("Refresh paused overnight · resumes ");
     const page = read("src/app/page.tsx");
     expect(page).not.toContain("RefreshButton");
   });

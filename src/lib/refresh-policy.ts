@@ -180,6 +180,16 @@ function minutesSince(iso: string | null, now: Date): number {
   return iso === null ? Infinity : (now.getTime() - new Date(iso).getTime()) / 60_000;
 }
 
+// The external scheduler fires at fixed quarter-hours but each refresh STARTS a
+// few seconds after its tick, so the next tick can register as (interval − a few
+// seconds) since the last start and be wrongly skipped as "not due" — leaving a
+// 30-minute gap and a dashboard that reads older than the cadence. A small grace
+// lets a tick that is within DUE_GRACE_MIN of the interval run. Safe: ticks are a
+// full interval apart, so this never double-runs — and the refresh lock + the
+// ~4-min scheduled-freshness window (refresh.ts) dominate, so keep DUE_GRACE_MIN
+// well under that window (2 < 4) as a belt-and-suspenders invariant.
+const DUE_GRACE_MIN = 2;
+
 function lastSuccessfulWhere(
   runs: RefreshRun[],
   pred: (mode: RunMode) => boolean,
@@ -287,7 +297,7 @@ export function decideScheduledRefresh(args: {
   const lastAnyAt = lastSuccessfulWhere(args.recentRuns, () => true);
   const lastDiscoveryAt = lastSuccessfulWhere(args.recentRuns, (m) => m.discovery);
 
-  if (minutesSince(lastFullAt, now) >= cfg.fullIntervalMin) {
+  if (minutesSince(lastFullAt, now) >= cfg.fullIntervalMin - DUE_GRACE_MIN) {
     const discovery =
       cfg.enableDiscovery && minutesSince(lastDiscoveryAt, now) >= cfg.discoveryIntervalMin;
     // Comment detail: once per day at/after the target hour (cost control).
@@ -363,9 +373,9 @@ export function classifyVideoHeat(args: {
 
 /**
  * Clamp a prospective scheduled-run time into active hours: anything that
- * lands inside the quiet window moves to the quiet-window end (6:00 AM ET)
- * of that local day. Used for the admin "next due" display so it never
- * advertises an overnight run that the policy would skip.
+ * lands inside the quiet window moves to the quiet-window end (config-driven,
+ * default 7:00 AM ET) of that local day. Used for the admin "next due" display
+ * so it never advertises an overnight run that the policy would skip.
  */
 export function nextActiveTime(at: Date, cfg: RefreshPolicyConfig): Date {
   if (!cfg.quietHoursEnabled || !isQuietHours(at, cfg)) return at;

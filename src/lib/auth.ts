@@ -53,3 +53,16 @@ export function checkAdminRequest(req: NextRequest): string | null {
 export function adminPasswordConfigured(): boolean {
   return getAdminPassword() !== null;
 }
+
+/**
+ * Constant-time check of an `Authorization: Bearer <secret>` header against the
+ * expected secret. Header-only (never accept secrets via query string — those
+ * leak into access logs / browser history / Referer). Returns false on any
+ * length/format mismatch without short-circuiting on content.
+ */
+export function bearerMatches(header: string | null, secret: string | null): boolean {
+  if (!secret || !header) return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(`Bearer ${secret}`);
+  return a.length === b.length && timingSafeEqual(a, b);
+}

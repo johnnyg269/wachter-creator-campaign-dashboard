@@ -1,7 +1,8 @@
-// Scheduled refresh endpoint. Protected by CRON_SECRET.
-// Vercel Cron sends "Authorization: Bearer $CRON_SECRET" automatically when
-// the env var is set; external schedulers can use the same header or
-// ?secret=... as a fallback.
+// Scheduled refresh endpoint. Protected by CRON_SECRET via the
+// "Authorization: Bearer $CRON_SECRET" header ONLY (constant-time check). A
+// query-param secret is intentionally not accepted — it would leak into access
+// logs and browser history. cron-job.org and the GitHub Actions backup both
+// send the header.
 //
 // Responds 202 immediately and runs the refresh after the response (via
 // after()), because the primary scheduler — cron-job.org free tier — caps
@@ -13,17 +14,17 @@
 
 import { after, type NextRequest, NextResponse } from "next/server";
 import { getCronSecret } from "@/lib/config";
+import { bearerMatches } from "@/lib/auth";
 import { runRefresh } from "@/lib/refresh";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 function authorized(req: NextRequest): boolean {
-  const secret = getCronSecret();
-  if (!secret) return false; // never run an unprotected public cron endpoint
-  const header = req.headers.get("authorization");
-  if (header === `Bearer ${secret}`) return true;
-  return req.nextUrl.searchParams.get("secret") === secret;
+  // Header-only, constant-time. Both schedulers (cron-job.org + the GitHub
+  // Actions backup) send "Authorization: Bearer $CRON_SECRET"; a ?secret= query
+  // param would leak the secret into access logs / history, so it isn't accepted.
+  return bearerMatches(req.headers.get("authorization"), getCronSecret());
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {

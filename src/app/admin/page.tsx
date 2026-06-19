@@ -20,6 +20,7 @@ import { RefreshHealthPanel } from "./refresh-health";
 import { EpisodeManager } from "./episode-manager";
 import { ReviewQueue } from "./review-queue";
 import { DiscoveryControls } from "./discovery-controls";
+import { ThumbnailRepairButton } from "./thumbnail-repair-button";
 import { ReviewCandidates } from "./review-candidates";
 
 export const dynamic = "force-dynamic";
@@ -282,6 +283,9 @@ export default async function AdminPage() {
               <div>
                 <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-muted">
                   Thumbnail status
+                </div>
+                <div className="mb-3">
+                  <ThumbnailRepairButton />
                 </div>
                 {data.thumbnailIssues.length === 0 ? (
                   <p className="text-xs text-muted">All tracked videos have a usable thumbnail.</p>

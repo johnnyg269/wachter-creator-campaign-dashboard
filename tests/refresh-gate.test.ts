@@ -124,13 +124,15 @@ describe("public read-only guarantees (source-level)", () => {
   });
   it("the public dashboard states the auto-refresh cadence only when the scheduler is verified", () => {
     const note = read("src/components/ui/auto-refresh-note.tsx");
-    expect(note).toContain("Auto-refreshes every");
-    // The cadence claim must be gated on verified scheduler metadata…
+    // Operational status: live label + next-expected refresh, cadence in the tooltip.
+    expect(note).toContain("Live tracking active");
+    expect(note).toContain("about every ${cadence} minutes");
+    // The live claim must be gated on verified scheduler metadata…
     expect(note).toContain("SCHEDULER.verified");
     // …and degrade honestly when the data ages past the thresholds.
-    expect(note).toContain("Refresh delayed, latest data shown");
+    expect(note).toContain("Refresh delayed");
     expect(note).toContain("Scheduler may be delayed");
-    expect(note).toContain("Last successful refresh");
+    expect(note).toContain("Last successful pull");
   });
   it("/api/refresh requires the admin session", () => {
     const src = read("src/app/api/refresh/route.ts");

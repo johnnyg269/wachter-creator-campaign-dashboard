@@ -120,7 +120,11 @@ describe("scheduler secret hygiene (source-level)", () => {
   it("the cron route never logs or returns the secret", () => {
     const route = read("src/app/api/cron/refresh/route.ts");
     expect(route).not.toMatch(/console\.(log|error)\([^)]*secret/i);
-    expect(route).toContain("Bearer ${secret}");
+    // Header-only, constant-time check (via bearerMatches); no ?secret= leak.
+    expect(route).toContain("bearerMatches");
+    expect(route).not.toMatch(/searchParams\.get\("secret"\)/);
+    // The actual constant-time Bearer comparison lives in the shared helper.
+    expect(read("src/lib/auth.ts")).toContain("Bearer ${secret}");
   });
   it("the route responds fast (202 + after) and supports GET and POST", () => {
     const route = read("src/app/api/cron/refresh/route.ts");

@@ -1,10 +1,12 @@
-// Public replacement for the old refresh button: viewers don't trigger
-// anything — data updates on a schedule and everyone sees the same saved view.
-//
-// Honest by construction: the cadence claim renders only while the
-// verified scheduler metadata says so AND the data is actually fresh. When
-// the last success ages past the thresholds the note degrades to a delayed
-// status instead of repeating a cadence promise the data contradicts.
+// Public refresh status. Viewers never trigger anything — data updates on a
+// schedule and everyone sees the same saved view. The wording is operational
+// and honest, never vague "confidence" language:
+//   fresh      → "Live tracking active · Updated 12m ago · Next refresh in 3m"
+//   due        → "Live tracking active · Updated 17m ago · Refresh due now"
+//   delayed    → "Refresh delayed · Last successful pull 34m ago"
+//   overnight  → "Refresh paused overnight · resumes 7:00 AM ET"
+// "Next refresh" is derived from the cadence + age at render (an estimate), so a
+// 17-minutes-old reading on a 15-minute cadence reads as "due now", not broken.
 
 import { AlertTriangle, Moon, RefreshCw } from "lucide-react";
 import { getStore } from "@/lib/store";
@@ -16,6 +18,8 @@ import {
   SCHEDULER_DELAYED_AFTER_MIN,
 } from "@/lib/scheduler";
 import { getRefreshPolicyConfig, isQuietHours } from "@/lib/refresh-policy";
+
+type Tone = "live" | "delayed" | "quiet";
 
 export async function AutoRefreshNote({
   variant = "pill",
@@ -36,116 +40,82 @@ export async function AutoRefreshNote({
   // Server component rendered per-request — freshness vs. wall clock is the point.
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
+  const cfg = getRefreshPolicyConfig();
+  const cadence = SCHEDULER.cadenceMinutes;
   const ageMin = lastSuccessAt ? (now - new Date(lastSuccessAt).getTime()) / 60_000 : null;
   const delayed = ageMin !== null && ageMin > REFRESH_DELAYED_AFTER_MIN;
   const veryDelayed = ageMin !== null && ageMin > SCHEDULER_DELAYED_AFTER_MIN;
+  const nextInMin = ageMin === null ? null : Math.max(0, Math.ceil(cadence - ageMin));
+  const quiet = isQuietHours(new Date(now), cfg);
+  const resumeHour = `${cfg.quietEndHour === 0 ? 12 : cfg.quietEndHour > 12 ? cfg.quietEndHour - 12 : cfg.quietEndHour}:00 ${cfg.quietEndHour < 12 ? "AM" : "PM"} ET`;
 
-  // Overnight pause is intentional, never a warning state.
-  const quiet = isQuietHours(new Date(now), getRefreshPolicyConfig());
+  // Decide the operational state + copy.
+  let tone: Tone;
+  let label: string;
+  let title: string;
   if (quiet) {
-    const body = (
-      <>
-        <AnimatedText text="Refresh paused overnight · resumes at 6:00 AM ET" />
-        {lastSuccessAt && (
-          <span className="text-muted-strong">
-            {" "}· Last successful refresh <TimeAgo iso={lastSuccessAt} />
-          </span>
-        )}
-      </>
-    );
-    if (variant === "inline") {
-      return (
-        <span
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
-          title="Scheduled refreshes pause from 12:00 AM to 6:00 AM Eastern to save collection credits. The dashboard keeps showing the latest saved data."
-        >
-          <Moon size={12} className="text-muted-strong" aria-hidden />
-          {body}
-        </span>
-      );
-    }
-    return (
-      <span
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
-        title="Scheduled refreshes pause from 12:00 AM to 6:00 AM Eastern to save collection credits. The dashboard keeps showing the latest saved data."
-      >
-        <Moon size={12} className="text-muted-strong" aria-hidden />
-        {body}
-      </span>
-    );
+    tone = "quiet";
+    label = `Refresh paused overnight · resumes ${resumeHour}`;
+    title = `Scheduled refreshes pause overnight to save collection credits. The dashboard keeps showing the latest saved data.`;
+  } else if (delayed || !SCHEDULER.verified) {
+    tone = "delayed";
+    label = veryDelayed || !SCHEDULER.verified ? "Scheduler may be delayed" : "Refresh delayed";
+    title = "The scheduled refresh is running behind. The dashboard shows the latest saved data.";
+  } else {
+    tone = "live";
+    label = "Live tracking active";
+    title = `Campaign data refreshes automatically about every ${cadence} minutes during active hours. All viewers see the same saved data.`;
   }
 
-  if (SCHEDULER.verified && !delayed) {
-    if (variant === "inline") {
-      return (
-        <span
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
-          title={`Campaign data refreshes automatically about every ${SCHEDULER.cadenceMinutes} minutes during active hours. All viewers see the same saved data.`}
-        >
-          <span className="flex items-center gap-2">
-            <span className="pulse-dot" aria-hidden />
-            <AnimatedText text={`Auto-refreshing every ${SCHEDULER.cadenceMinutes} minutes`} />
-          </span>
-          {lastSuccessAt && (
-            <span className="text-muted-strong">
-              · Updated <TimeAgo iso={lastSuccessAt} />
-            </span>
-          )}
-        </span>
-      );
-    }
-    return (
-      <span
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
-        title={`Campaign data refreshes automatically about every ${SCHEDULER.cadenceMinutes} minutes during active hours. All viewers see the same saved data.`}
-      >
-        <RefreshCw size={12} className="text-muted-strong" aria-hidden />
-        <AnimatedText text={`Auto-refreshes every ${SCHEDULER.cadenceMinutes} minutes`} />
-        {lastSuccessAt && (
-          <span className="text-muted-strong">
-            · Last successful refresh <TimeAgo iso={lastSuccessAt} />
-          </span>
-        )}
-      </span>
-    );
-  }
+  // The trailing "· Updated Xm ago · Next refresh …" detail line.
+  const detail = lastSuccessAt ? (
+    <span className="text-muted-strong">
+      {tone === "delayed" ? (
+        <>
+          {" "}· Last successful pull <TimeAgo iso={lastSuccessAt} />
+        </>
+      ) : tone === "quiet" ? (
+        <>
+          {" "}· Last successful refresh <TimeAgo iso={lastSuccessAt} />
+        </>
+      ) : (
+        <>
+          {" "}· Updated <TimeAgo iso={lastSuccessAt} /> ·{" "}
+          {nextInMin && nextInMin > 0 ? `Next refresh in ${nextInMin}m` : "Refresh due now"}
+        </>
+      )}
+    </span>
+  ) : null;
+
+  const Icon = tone === "quiet" ? Moon : tone === "delayed" ? AlertTriangle : RefreshCw;
+  const iconCls = tone === "delayed" ? "text-warning" : "text-muted-strong";
 
   if (variant === "inline") {
     return (
       <span
-        className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-warning/90"
-        title="The scheduled refresh is running behind. The dashboard shows the latest saved data."
+        className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-xs ${tone === "delayed" ? "text-warning/90" : "text-muted"}`}
+        title={title}
       >
-        <AlertTriangle size={12} aria-hidden />
-        <AnimatedText
-          text={
-            veryDelayed || !SCHEDULER.verified
-              ? "Scheduler may be delayed"
-              : "Refresh delayed, latest data shown"
-          }
-        />
-        {lastSuccessAt && (
-          <span className="text-muted-strong">
-            · Last successful refresh <TimeAgo iso={lastSuccessAt} />
-          </span>
-        )}
+        <span className="flex items-center gap-2">
+          {tone === "live" ? (
+            <span className="pulse-dot" aria-hidden />
+          ) : (
+            <Icon size={12} className={iconCls} aria-hidden />
+          )}
+          <AnimatedText text={label} />
+        </span>
+        {detail}
       </span>
     );
   }
   return (
     <span
-      className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted whitespace-nowrap"
-      title="The scheduled refresh is running behind. The dashboard shows the latest saved data."
+      className={`inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs whitespace-nowrap ${tone === "delayed" ? "text-warning/90" : "text-muted"}`}
+      title={title}
     >
-      <AlertTriangle size={12} className="text-warning" aria-hidden />
-      <AnimatedText
-        text={veryDelayed || !SCHEDULER.verified ? "Scheduler may be delayed" : "Refresh delayed, latest data shown"}
-      />
-      {lastSuccessAt && (
-        <span className="text-muted-strong">
-          · Last successful refresh <TimeAgo iso={lastSuccessAt} />
-        </span>
-      )}
+      <Icon size={12} className={iconCls} aria-hidden />
+      <AnimatedText text={label} />
+      {detail}
     </span>
   );
 }

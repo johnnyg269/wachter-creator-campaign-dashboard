@@ -23,7 +23,6 @@ import {
   formatDelta,
   formatNumber,
   formatPct,
-  timeAgo,
   truncate,
 } from "@/lib/format";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -216,16 +215,9 @@ export default async function DashboardPage({
               Reels.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
+              {/* Operational status only — the refresh note carries liveness +
+                  next-refresh timing. No executive-useless "confidence" copy. */}
               <AutoRefreshNote variant="inline" />
-              <span aria-hidden className="text-muted-strong">·</span>
-              <span
-                title={`${data.confidence.detail}${data.confidence.verifiedAt ? ` Last verified ${timeAgo(data.confidence.verifiedAt)}.` : ""}`}
-                className={clsx(
-                  data.confidence.level === "building" ? "text-accent" : "text-foreground/80",
-                )}
-              >
-                <AnimatedText text={data.confidence.headline} />
-              </span>
             </div>
           </div>
 

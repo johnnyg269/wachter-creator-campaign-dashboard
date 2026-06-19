@@ -56,13 +56,15 @@ describe("placements", () => {
     expect(page).toContain("<AnimatedText text={formatCompact(kpis.totalViews)} rollOnMount />");
     expect(page).toContain("<AnimatedText text={formatDelta(kpis.viewsGained24h)} />");
     expect(page).toContain("leads with ${topPlatformShare}% of views");
-    // Hero status pill rolls between confidence states.
-    expect(page).toContain("<AnimatedText text={data.confidence.headline} />");
+    // Hero shows operational status via the refresh note — no confidence chip.
+    expect(page).toContain('<AutoRefreshNote variant="inline" />');
+    expect(page).not.toContain("data.confidence.headline");
   });
   it("refresh note rolls between live / paused / delayed states", () => {
     const note = read("src/components/ui/auto-refresh-note.tsx");
-    expect(note).toContain('text="Refresh paused overnight · resumes at 6:00 AM ET"');
-    expect(note).toContain("Auto-refreshing every ${SCHEDULER.cadenceMinutes} minutes");
+    expect(note).toContain("Refresh paused overnight · resumes ${resumeHour}");
+    expect(note).toContain('"Live tracking active"');
+    expect(note).toContain("Next refresh in ${nextInMin}m");
     expect(note).toContain("AnimatedText");
   });
   it("chart Now label and admin health chip animate", () => {

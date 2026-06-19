@@ -8,7 +8,7 @@ import { formatCompact } from "./format";
 
 export interface DataConfidence {
   level: "high" | "partial" | "building";
-  /** Short badge line, e.g. "High confidence". */
+  /** Short operational status line (e.g. "Live tracking active"). */
   headline: string;
   /** One-sentence plain-English explanation. */
   detail: string;
@@ -45,7 +45,9 @@ export function computeConfidence(metrics: VideoMetrics[]): DataConfidence {
   if (neverConfirmed.length > 0) {
     return {
       level: "building",
-      headline: "Confidence building",
+      // Operational, not "confidence" language — executives want status, not a
+      // confidence score. The video still shows; views land on the next capture.
+      headline: "Live tracking active",
       detail: `${neverConfirmed.length} of ${tracked.length} videos awaiting confirmed view counts.`,
       verifiedAt,
     };
@@ -62,7 +64,7 @@ export function computeConfidence(metrics: VideoMetrics[]): DataConfidence {
   }
   return {
     level: "high",
-    headline: "High confidence",
+    headline: "All views confirmed",
     detail: "All tracked videos have confirmed view counts.",
     verifiedAt,
   };
