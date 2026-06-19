@@ -8,6 +8,7 @@ import { AnimatedText } from "@/components/ui/animated-text";
 import { formatDateTime } from "@/lib/format";
 import { REFRESH_LOCK_TTL_MS } from "@/lib/refresh";
 import {
+  REFRESH_DELAYED_AFTER_MIN,
   SCHEDULER,
   computeRefreshHealth,
   getSchedulerLiveStatus,
@@ -152,7 +153,7 @@ export async function RefreshHealthPanel({ runs }: { runs: RefreshRun[] }) {
           <Stat label="Refresh health">
             <AnimatedText className={h.cls} text={h.label} />
             <span className="block text-[10px] font-normal text-muted-strong">
-              Healthy = success within 1.5× the refresh cadence
+              Healthy = success within {REFRESH_DELAYED_AFTER_MIN} min (~2 refresh cycles)
             </span>
           </Stat>
           <Stat label="Active scheduler">
