@@ -823,7 +823,8 @@ export async function getVideosPageData(range: TimeRange = "7d"): Promise<Videos
 
 export interface CommentsPageData {
   campaign: Campaign;
-  comments: Array<Comment & { video: Video | null; episodeName: string | null }>;
+  // rawJson is stripped — the public page never needs the raw provider payload.
+  comments: Array<Omit<Comment, "rawJson"> & { video: Video | null; episodeName: string | null }>;
   videos: Video[];
   episodes: EpisodeGroup[];
 }
@@ -838,8 +839,9 @@ export async function getCommentsPageData(): Promise<CommentsPageData> {
     campaign: data.campaign,
     comments: comments.map((c) => {
       const video = videoById.get(c.videoId) ?? null;
+      const { rawJson: _rawJson, ...pub } = c; // never ship the raw provider payload publicly
       return {
-        ...c,
+        ...pub,
         video,
         episodeName: video?.episodeGroupId ? (episodeById.get(video.episodeGroupId) ?? null) : null,
       };
@@ -1009,6 +1011,8 @@ export interface AdminPageData {
   thumbnailIssues: ThumbnailIssue[];
   /** SocialCrawl provider status + credit usage (admin-only, never the key). */
   socialcrawl: SocialcrawlAdminStatus;
+  /** Per-platform comment ingestion health (admin-only). */
+  commentHealth: CommentHealthRow[];
   /** YouTube provider health — API vs Apify fallback (never the key value). */
   youtubeProvider: YouTubeProviderStatus;
   /** Per-episode rollups for the admin Episodes manager. */
@@ -1067,6 +1071,24 @@ export interface ThumbnailIssue {
   attempts: number;
   lastAttemptAt: string | null;
   failureReason: string | null;
+}
+
+export interface CommentHealthRow {
+  platform: Platform;
+  /** Where comment TEXT comes from: "SocialCrawl" (TT/IG/FB) or "YouTube Data API". */
+  source: string;
+  /** Comment text rows stored for this platform. */
+  stored: number;
+  /** Most recent stored comment (postedAt, else capturedAt). */
+  lastCommentAt: string | null;
+  /** Latest comment-pull attempt (SocialCrawl comments tier) — null for YouTube,
+   *  whose comments ride the metrics run rather than a separate logged attempt. */
+  lastPullAt: string | null;
+  lastReturned: number | null;
+  lastPullOk: boolean | null;
+  failuresToday: number;
+  /** SocialCrawl comment credits spent today (1/call); 0 for YouTube (free API). */
+  creditsToday: number;
 }
 
 export interface DiscoveryStatus {
@@ -1405,6 +1427,31 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     facebookViewSource: fbProvider === "socialcrawl" ? "socialcrawl_public_plays" : "apify_viewscount",
   };
 
+  // Comment ingestion health (admin-only). Text source: SocialCrawl for TT/IG/FB
+  // (/{platform}/post/comments), YouTube Data API for YouTube. Counts come from
+  // stored comments; pull status from the logged "comments" attempts (SocialCrawl).
+  const allComments = await store.listComments({ limit: 5000 });
+  const commentAttempts = allAttempts.filter((a) => a.kind === "comments");
+  const commentHealth: CommentHealthRow[] = PLATFORMS.map((platform) => {
+    const stored = allComments.filter((c) => c.platform === platform);
+    const lastCommentAt =
+      stored.map((c) => c.postedAt ?? c.capturedAt).filter(Boolean).sort().pop() ?? null;
+    const atts = commentAttempts.filter((a) => a.platform === platform); // sorted desc already
+    const last = atts[0] ?? null;
+    const todayAtts = atts.filter((a) => localDateKey(new Date(a.capturedAt), scTz) === scTodayKey);
+    return {
+      platform,
+      source: platform === "youtube" ? "YouTube Data API" : "SocialCrawl",
+      stored: stored.length,
+      lastCommentAt,
+      lastPullAt: last?.capturedAt ?? null,
+      lastReturned: last?.itemCount ?? null,
+      lastPullOk: last ? last.success : null,
+      failuresToday: todayAtts.filter((a) => !a.success).length,
+      creditsToday: platform === "youtube" ? 0 : todayAtts.length,
+    };
+  });
+
   // Actor IDs are admin-only — read them from the persisted provider configs,
   // never from the (publicly served) health summary. Mirror the old behavior:
   // only platforms actually served by Apify surface an actor id.
@@ -1472,6 +1519,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     reviewCandidates,
     thumbnailIssues,
     socialcrawl,
+    commentHealth,
     youtubeProvider,
     readiness: {
       databaseConnected: health.store.kind === "postgres",

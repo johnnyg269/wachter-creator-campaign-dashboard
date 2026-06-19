@@ -85,4 +85,7 @@ export interface SocialPlatformProvider {
 export interface PlatformFetchOptions {
   /** Pull full comment detail (text) this cycle. Default true for back-compat. */
   wantComments?: boolean;
+  /** Max per-video comment fetches allowed this call (in-run credit budget so a
+   *  single cycle cannot overshoot the SocialCrawl daily cap). Unset = unlimited. */
+  commentBudget?: number;
 }

@@ -80,6 +80,27 @@ export interface ScCall {
   cached: boolean;
 }
 
+// Individual comment from /{platform}/post/comments — unified across TikTok,
+// Instagram, and Facebook: data.items[].comment. published_at is Unix SECONDS
+// (number) on TikTok and an ISO/string on IG/FB, so it MUST go through
+// parseTimestamp (never new Date() directly).
+interface ScComment {
+  id?: string;
+  parent_id?: string | null;
+  post_id?: string | null;
+  text?: string;
+  author?: { username?: string; display_name?: string | null; verified?: boolean | null };
+  engagement?: { likes?: number; replies?: number | null };
+  flags?: { pinned?: boolean | null; deleted?: boolean | null };
+  published_at?: string | number;
+  created_at?: string | number;
+}
+interface ScCommentEnvelope {
+  data?: { items?: Array<{ comment?: ScComment }>; total?: number; next_cursor?: string | null } | Array<{ comment?: ScComment }>;
+  credits_used?: number;
+  cached?: boolean;
+}
+
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
 }
@@ -241,10 +262,63 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
     return this.getVideoMetadata(video.originalUrl);
   }
 
-  /** SocialCrawl exposes comment COUNTS (in metrics), not comment TEXT here.
-   * Return [] so existing comment text is preserved (never wiped). */
-  async getVideoComments(): Promise<NormalizedComment[]> {
-    return [];
+  /** Parse one SocialCrawl comment into our normalized shape; null when empty
+   *  or deleted (never store an empty/placeholder comment). */
+  private parseComment(c: ScComment): NormalizedComment | null {
+    const text = typeof c.text === "string" ? c.text.trim() : "";
+    if (!text || c.flags?.deleted) return null;
+    return {
+      externalCommentId: c.id ?? null, // stable id → dedupe key
+      authorName: c.author?.display_name?.trim() || c.author?.username?.trim() || null,
+      text,
+      // TikTok published_at is Unix SECONDS; IG/FB is a string — parseTimestamp
+      // handles sec/ms/ISO → ISO and rejects junk (never "Jan 1970").
+      postedAt: parseTimestamp(c.published_at) ?? parseTimestamp(c.created_at) ?? null,
+      likes: num(c.engagement?.likes),
+      replyCount: num(c.engagement?.replies),
+      permalink: null,
+      rawJson: null,
+    };
+  }
+
+  private commentItemsOf(json: ScCommentEnvelope | null): ScComment[] {
+    const d = json?.data as
+      | { items?: unknown[]; comments?: unknown[]; results?: unknown[] }
+      | unknown[]
+      | undefined;
+    const arr: unknown[] = Array.isArray(d)
+      ? d
+      : Array.isArray(json) // tolerate a bare top-level array too
+        ? (json as unknown[])
+        : (d?.items ?? d?.comments ?? d?.results ?? []);
+    return arr
+      .map((it) =>
+        it && typeof it === "object" && "comment" in it
+          ? (it as { comment?: ScComment }).comment
+          : (it as ScComment),
+      )
+      .filter((c): c is ScComment => Boolean(c));
+  }
+
+  /** Fetch one page of comments (newest/top) for a video — 1 credit. We do NOT
+   *  paginate: the dashboard surfaces recent comments and accumulates across the
+   *  twice-daily pulls (dedup by stable id), keeping cost at 1 credit/video. */
+  private async fetchComments(url: string): Promise<{ comments: NormalizedComment[]; call: ScCall }> {
+    const call = await this.call(`/${this.platform}/post/comments?url=${encodeURIComponent(url)}`);
+    const comments = this.commentItemsOf(call.json as unknown as ScCommentEnvelope)
+      .map((c) => this.parseComment(c))
+      .filter((c): c is NormalizedComment => c !== null);
+    return { comments, call };
+  }
+
+  /** Individual comment TEXT via /{platform}/post/comments. On failure returns
+   *  [] so the pipeline preserves last-known-good comments (never wipes). */
+  async getVideoComments(video: Video): Promise<NormalizedComment[]> {
+    try {
+      return (await this.fetchComments(video.originalUrl)).comments;
+    } catch {
+      return [];
+    }
   }
 
   async discoverNewVideos(profile: PlatformProfile): Promise<NormalizedVideo[]> {
@@ -327,6 +401,59 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
       }
     }
 
-    return { videos: [...byId.values()], commentsByVideo: {}, attempts };
+    // 3) Comment TEXT tier (TikTok / Instagram / Facebook): on the twice-daily
+    // comment cycle, pull one page of comments per TRACKED video via
+    // /{platform}/post/comments. 1 credit/video; dedup-by-id happens in the
+    // store. A per-video failure preserves last-known-good (we just skip it).
+    const commentsByVideo: Record<string, NormalizedComment[]> = {};
+    if (wantComments) {
+      // In-run credit budget: never exceed what the caller allots (keeps a
+      // single comment cycle from overshooting the SocialCrawl daily cap).
+      let budget = opts.commentBudget ?? Infinity;
+      for (const v of videos) {
+        if (budget <= 0) {
+          attempts.push({
+            provider: "socialcrawl",
+            actorId: null,
+            kind: "comments",
+            inputDescription: `socialcrawl ${this.platform} comments · skipped (credit budget reached)`,
+            success: true,
+            runId: null,
+            itemCount: 0,
+            error: null,
+          });
+          break;
+        }
+        try {
+          const { comments, call: cc } = await this.fetchComments(v.originalUrl);
+          budget -= 1;
+          const key = v.externalVideoId ?? v.originalUrl ?? "";
+          if (key && comments.length > 0) commentsByVideo[key] = comments;
+          attempts.push({
+            provider: "socialcrawl",
+            actorId: null,
+            kind: "comments",
+            inputDescription: describe(this.platform, "comments", cc, `${comments.length} comments`),
+            success: true,
+            runId: null,
+            itemCount: comments.length,
+            error: null,
+          });
+        } catch (e) {
+          attempts.push({
+            provider: "socialcrawl",
+            actorId: null,
+            kind: "comments",
+            inputDescription: `socialcrawl ${this.platform} comments · failed`,
+            success: false,
+            runId: null,
+            itemCount: 0,
+            error: e instanceof Error ? e.message.slice(0, 160) : String(e),
+          });
+        }
+      }
+    }
+
+    return { videos: [...byId.values()], commentsByVideo, attempts };
   }
 }

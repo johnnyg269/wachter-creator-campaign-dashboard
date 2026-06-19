@@ -28,7 +28,8 @@ import { TimeAgo } from "@/components/ui/time-ago";
 import { VideoThumb } from "@/components/ui/video-thumb";
 import { formatCompact, formatNumber, truncate } from "@/lib/format";
 
-export type FeedComment = Comment & { video: Video | null; episodeName: string | null };
+// rawJson is intentionally omitted from the public payload (server strips it).
+export type FeedComment = Omit<Comment, "rawJson"> & { video: Video | null; episodeName: string | null };
 
 type SentimentFilter = "all" | Sentiment | "needs_response";
 type SortKey = "newest" | "likes";

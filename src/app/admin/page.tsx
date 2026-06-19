@@ -395,6 +395,65 @@ export default async function AdminPage() {
           </Card>
         </section>
 
+        <section id="comments">
+          <Card>
+            <CardHeader
+              title="Comment ingestion"
+              subtitle="Comment TEXT: SocialCrawl for TikTok/Instagram/Facebook, YouTube Data API for YouTube. Pulled twice daily (12:00 + 18:00 ET)."
+            />
+            <CardBody className="overflow-x-auto text-xs">
+              <table className="w-full min-w-[680px] text-left">
+                <thead className="text-[10px] uppercase tracking-wide text-muted-strong">
+                  <tr className="border-b border-border">
+                    <th className="py-1.5 pr-3 font-medium">Platform</th>
+                    <th className="py-1.5 pr-3 font-medium">Comment source</th>
+                    <th className="py-1.5 pr-3 font-medium">Stored</th>
+                    <th className="py-1.5 pr-3 font-medium">Latest comment</th>
+                    <th className="py-1.5 pr-3 font-medium">Last pull</th>
+                    <th className="py-1.5 pr-3 font-medium">Returned</th>
+                    <th className="py-1.5 pr-3 font-medium">Fails today</th>
+                    <th className="py-1.5 pr-3 font-medium">Credits today</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.commentHealth.map((c) => (
+                    <tr key={c.platform} className="border-b border-border/60">
+                      <td className="py-2 pr-3 font-medium capitalize">{c.platform}</td>
+                      <td className="py-2 pr-3 text-muted">{c.source}</td>
+                      <td className="tabular py-2 pr-3">{c.stored}</td>
+                      <td className="py-2 pr-3 text-muted">
+                        {c.lastCommentAt ? <TimeAgo iso={c.lastCommentAt} /> : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-muted">
+                        {c.lastPullAt ? (
+                          <>
+                            <TimeAgo iso={c.lastPullAt} />{" "}
+                            <span className={c.lastPullOk ? "text-positive" : "text-negative"}>
+                              {c.lastPullOk ? "ok" : "failed"}
+                            </span>
+                          </>
+                        ) : c.platform === "youtube" ? (
+                          "via metrics run"
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="tabular py-2 pr-3">{c.lastReturned ?? "—"}</td>
+                      <td className="tabular py-2 pr-3">{c.failuresToday}</td>
+                      <td className="tabular py-2 pr-3">{c.creditsToday}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-3 text-[10px] text-muted-strong">
+                All four platforms expose individual comment text. SocialCrawl comment pulls cost 1
+                credit per tracked video per pull (within the daily cap); YouTube uses the free Data
+                API. Empty/failed pulls preserve previously stored comments.
+              </p>
+            </CardBody>
+          </Card>
+        </section>
+
         <section id="youtube">
           <Card>
             <CardHeader

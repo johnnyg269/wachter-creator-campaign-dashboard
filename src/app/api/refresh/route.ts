@@ -5,7 +5,8 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { runRefresh, type RefreshModeName } from "@/lib/refresh";
-import { checkAdminRequest } from "@/lib/auth";
+import { bearerMatches, checkAdminRequest } from "@/lib/auth";
+import { getCronSecret } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -13,8 +14,12 @@ export const maxDuration = 300;
 const MODES: RefreshModeName[] = ["metrics", "discovery", "full"];
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const denied = checkAdminRequest(req);
-  if (denied) {
+  // Admin session OR the server CRON_SECRET as a constant-time Bearer header
+  // (header-only — lets server-side automation trigger a manual run, e.g. an
+  // immediate comment pull, without exposing the secret in a URL). Never public.
+  const authed =
+    checkAdminRequest(req) === null || bearerMatches(req.headers.get("authorization"), getCronSecret());
+  if (!authed) {
     return NextResponse.json(
       { ok: false, error: "Refreshes run automatically on a scheduled cadence. Admin sign-in is required for manual refresh." },
       { status: 401 },

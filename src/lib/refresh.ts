@@ -64,6 +64,9 @@ async function apifyAllowedNow(store: Store): Promise<boolean> {
 
 /** A crashed refresh's lock expires after this — nothing blocks forever. */
 export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
+/** SocialCrawl credits held back from the per-cycle comment budget so the
+ *  metrics sweep + FB detail in the SAME run never tip over the daily cap. */
+const COMMENT_CREDIT_RESERVE = 20;
 /** Normal manual refreshes are pointless sooner than this after a success. */
 export const MANUAL_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
 /**
@@ -484,8 +487,25 @@ async function refreshPlatform(
       // wantComments is the cost lever: comment detail (text) is pulled only on
       // the once-per-day comment cycle; metric-only refreshes skip the comment
       // add-ons entirely. Comment COUNTS still arrive with the cheap metric item.
+      //
+      // In-run credit budget: cap the number of per-video comment fetches at the
+      // SocialCrawl credit headroom remaining today (minus a small reserve), so a
+      // single comment cycle can never overshoot the daily cap mid-run. Recomputed
+      // per platform from persisted attempts, so earlier platforms in this run
+      // count. Only meaningful for the SocialCrawl provider (YouTube is free).
+      let commentBudget: number | undefined;
+      if (mode.comments && provider.providerType === "socialcrawl") {
+        const rcfg = getRefreshPolicyConfig();
+        const usedToday = socialcrawlCreditsToday(
+          await store.listCollectionAttempts(1000),
+          new Date(),
+          rcfg.quietTimezone,
+        ).credits;
+        commentBudget = Math.max(0, rcfg.socialcrawlDailyCreditCap - usedToday - COMMENT_CREDIT_RESERVE);
+      }
       fetched = await provider.fetchPlatform(targetProfile, targetVideos, since, {
         wantComments: mode.comments,
+        commentBudget,
       });
     } else {
       // Per-video fallback path for providers without a batch implementation.
@@ -525,6 +545,41 @@ async function refreshPlatform(
     }
 
     const capturedAt = new Date().toISOString();
+
+    // Comment TEXT upsert — decoupled from the metrics sweep. The provider
+    // fetched comments per TRACKED video (keyed by externalVideoId ?? originalUrl),
+    // so we drain that map over the SAME tracked set. This runs BEFORE the
+    // empty-cycle guard and independent of `groups`, so comments are never
+    // dropped for videos outside the profile window (e.g. older Facebook reels)
+    // or when the metrics sweep returns nothing. Dedup is by stable comment id
+    // in the store; an empty/failed pull adds nothing (never wipes last-known-good).
+    if (mode.comments) {
+      for (const v of targetVideos) {
+        const key = v.externalVideoId ?? v.originalUrl ?? "";
+        const comments = key ? (fetched.commentsByVideo[key] ?? []) : [];
+        for (const c of comments) {
+          const tags = tagComment(c.text);
+          const cls = classifyComment(c.text, tags);
+          const { created } = await store.upsertComment({
+            videoId: v.id,
+            platform,
+            externalCommentId: c.externalCommentId,
+            authorName: c.authorName,
+            text: c.text,
+            postedAt: c.postedAt,
+            likes: c.likes,
+            replyCount: c.replyCount,
+            sentiment: cls.sentiment,
+            needsResponse: cls.needsResponse,
+            tags,
+            permalink: c.permalink,
+            capturedAt,
+            rawJson: null,
+          });
+          if (created) out.commentsUpdated++;
+        }
+      }
+    }
 
     // Group fetched records by the tracked video they resolve to and merge —
     // one snapshot per video per refresh, never a views-less duplicate
@@ -656,7 +711,7 @@ async function refreshPlatform(
       return out;
     }
 
-    for (const { merged: n, commentKeys } of groups.values()) {
+    for (const { merged: n } of groups.values()) {
       const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out, mode.discovery);
       if (!video) continue;
 
@@ -689,31 +744,6 @@ async function refreshPlatform(
         rawJson: null, // raw payload already stored on the video
       });
       out.videosUpdated++;
-
-      const comments = mode.comments
-        ? [...commentKeys].flatMap((k) => fetched.commentsByVideo[k] ?? [])
-        : [];
-      for (const c of comments) {
-        const tags = tagComment(c.text);
-        const cls = classifyComment(c.text, tags);
-        const { created } = await store.upsertComment({
-          videoId: video.id,
-          platform,
-          externalCommentId: c.externalCommentId,
-          authorName: c.authorName,
-          text: c.text,
-          postedAt: c.postedAt,
-          likes: c.likes,
-          replyCount: c.replyCount,
-          sentiment: cls.sentiment,
-          needsResponse: cls.needsResponse,
-          tags,
-          permalink: c.permalink,
-          capturedAt,
-          rawJson: null,
-        });
-        if (created) out.commentsUpdated++;
-      }
     }
 
     // Tracked videos absent from this cycle's provider response keep their
