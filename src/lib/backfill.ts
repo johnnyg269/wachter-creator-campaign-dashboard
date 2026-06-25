@@ -54,10 +54,18 @@ function profileUrlFor(platform: Platform): string | null {
   return SEED_PROFILES.find((p) => p.platform === platform)?.url ?? null;
 }
 
-/** Per-platform safety ceiling on results (the date floor usually stops sooner). */
-const MAX_RESULTS_PER_PLATFORM = 250;
-/** Per Apify run-sync wait (ms). */
-const APIFY_RUN_TIMEOUT_MS = 270_000;
+interface ApifyRun {
+  id?: string;
+  status?: string;
+  defaultDatasetId?: string;
+  usageTotalUsd?: number;
+}
+
+/** Per-platform safety ceiling on results (the date floor usually stops sooner;
+ *  the benchmarked back-catalog is ≤74/platform, so 120 is ample headroom). */
+const MAX_RESULTS_PER_PLATFORM = 120;
+/** Overall wait budget for one actor run (poll loop), under the 300s function cap. */
+const APIFY_RUN_TIMEOUT_MS = 250_000;
 /** Conservative worst-case cost of one date-floored Apify profile run (observed
  *  ~$0.24 in the benchmark). Used for the PRE-SPEND cost-cap guard so the cap can
  *  abort BEFORE any Apify run, not just report after. */
@@ -154,9 +162,14 @@ const IMPORTABLE: ReadonlySet<CandidateClass> = new Set<CandidateClass>([
 ]);
 const MAX_DISPLAY = 80;
 
-/** Run one Apify actor synchronously (date-floored) and return normalized videos
- *  + the run's actual cost. SEPARATE from the ongoing-Apify gate — only the
- *  backfill caller (with BACKFILL_DISCOVERY_PROVIDER=apify) reaches here. */
+/**
+ * Run one Apify actor (date-floored) and return normalized videos + the run's
+ * actual cost. Uses explicit start → poll-to-terminal → fetch-dataset rather
+ * than run-sync: run-sync can return a CACHED/deduped earlier run (a prior
+ * cut-short run would otherwise be replayed) and can time out mid-run; starting
+ * a fresh run and polling guarantees a complete, current dataset + true cost.
+ * SEPARATE from the ongoing-Apify gate — only the backfill caller reaches here.
+ */
 async function enumerateApify(
   platform: Platform,
   sinceIso: string,
@@ -166,28 +179,52 @@ async function enumerateApify(
   const actorId = backfillActorId(platform);
   const profileUrl = profileUrlFor(platform);
   if (!actorId || !profileUrl) return { videos: [], rawCount: 0, costUsd: 0, status: 0 };
-  const built = buildInputCandidates(platform, actorId, "discover", {
-    profileUrl,
-    sinceIso,
-    limit: maxResults,
-  })[0];
+  const built = buildInputCandidates(platform, actorId, "discover", { profileUrl, sinceIso, limit: maxResults })[0];
   if (!built) return { videos: [], rawCount: 0, costUsd: 0, status: 0 };
+  const auth = { Authorization: `Bearer ${token}` };
 
-  const res = await fetch(
-    `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?clean=true`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(built.input),
-      signal: AbortSignal.timeout(APIFY_RUN_TIMEOUT_MS),
-    },
-  );
-  let items: unknown[] = [];
+  // 1) Start a FRESH run.
+  const startRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify(built.input),
+    signal: AbortSignal.timeout(20_000),
+  });
+  let run: ApifyRun | null = null;
   try {
-    const json = await res.json();
-    items = Array.isArray(json) ? json : [];
+    run = ((await startRes.json()) as { data?: ApifyRun }).data ?? null;
   } catch {
-    items = [];
+    run = null;
+  }
+  if (!run?.id) return { videos: [], rawCount: 0, costUsd: null, status: startRes.status };
+
+  // 2) Poll until terminal (SUCCEEDED / FAILED / ABORTED / TIMED-OUT) or the budget.
+  const deadline = Date.now() + APIFY_RUN_TIMEOUT_MS;
+  while (Date.now() < deadline && (run.status === "READY" || run.status === "RUNNING")) {
+    await new Promise((r) => setTimeout(r, 5000));
+    try {
+      const resp: Response = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}`, { headers: auth, signal: AbortSignal.timeout(10_000) });
+      const parsed = (await resp.json()) as { data?: ApifyRun };
+      run = parsed.data ?? run;
+    } catch {
+      // transient poll failure — keep waiting
+    }
+  }
+
+  // 3) Fetch the dataset items.
+  let items: unknown[] = [];
+  const datasetId = run.defaultDatasetId;
+  if (datasetId) {
+    try {
+      const dr = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?clean=true`, {
+        headers: auth,
+        signal: AbortSignal.timeout(30_000),
+      });
+      const json = await dr.json();
+      items = Array.isArray(json) ? json : [];
+    } catch {
+      items = [];
+    }
   }
   const videos = items
     .map((it) => {
@@ -197,20 +234,7 @@ async function enumerateApify(
     })
     .filter((v): v is NormalizedVideo => v !== null);
 
-  // Best-effort actual cost: the most recent run for this actor (the one we just
-  // triggered). Never throws — cost is reported as null if unavailable.
-  let costUsd: number | null = null;
-  try {
-    const r = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?desc=true&limit=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    const d = (await r.json()) as { data?: { items?: Array<{ usageTotalUsd?: number }> } };
-    costUsd = d.data?.items?.[0]?.usageTotalUsd ?? null;
-  } catch {
-    costUsd = null;
-  }
-  return { videos, rawCount: items.length, costUsd, status: res.status };
+  return { videos, rawCount: items.length, costUsd: run.usageTotalUsd ?? null, status: startRes.status };
 }
 
 /**

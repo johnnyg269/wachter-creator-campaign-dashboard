@@ -123,26 +123,33 @@ describe("runBackfillDryRun — enumerate + classify + NEVER write", () => {
     });
     const countBefore = (await store.listVideos({ includeHidden: true })).length;
 
-    let ttCalls = 0;
+    let ttStarts = 0;
+    const ttData = [
+      ttItem("111", "2026-06-10T00:00:00.000Z", 1000), // already MTL
+      ttItem("222", "2026-04-20T00:00:00.000Z", 5000), // new, pre-MTL → suggested bootcamp
+      ttItem("7627682544586083614", "2026-04-12T00:00:00.000Z", 23000), // anchor → suggested bootcamp
+    ];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
         const u = String(url);
-        let body: unknown = [];
-        if (u.includes("/runs?desc")) body = { data: { items: [{ usageTotalUsd: 0.2 }] } };
-        else if (u.includes(`/acts/${TT_ACTOR}/run-sync-get-dataset-items`)) {
-          ttCalls++;
-          body = [
-            ttItem("111", "2026-06-10T00:00:00.000Z", 1000), // already MTL
-            ttItem("222", "2026-04-20T00:00:00.000Z", 5000), // new, pre-MTL → suggested bootcamp
-            ttItem("7627682544586083614", "2026-04-12T00:00:00.000Z", 23000), // anchor → suggested bootcamp
-          ];
-        } else if (u.includes("run-sync-get-dataset-items")) body = []; // IG/FB empty
-        return { ok: true, status: 201, json: async () => body } as unknown as Response;
+        // start run → SUCCEEDED immediately (no poll); dataset id encodes the actor.
+        const start = u.match(/\/acts\/([^/]+)\/runs$/);
+        if (start) {
+          if (start[1] === TT_ACTOR) ttStarts++;
+          return { ok: true, status: 201, json: async () => ({ data: { id: `run-${start[1]}`, status: "SUCCEEDED", defaultDatasetId: `ds-${start[1]}`, usageTotalUsd: 0.2 } }) } as unknown as Response;
+        }
+        const ds = u.match(/\/datasets\/ds-([^/]+)\/items/);
+        if (ds) {
+          const body = ds[1] === TT_ACTOR ? ttData : [];
+          return { ok: true, status: 200, json: async () => body } as unknown as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({ data: { status: "SUCCEEDED" } }) } as unknown as Response;
       }),
     );
 
     const report = await runBackfillDryRun(store, CFG);
+    const ttCalls = ttStarts;
 
     // NOTHING written.
     expect(report.wroteRecords).toBe(false);
@@ -179,25 +186,26 @@ describe("runBackfillDryRun — enumerate + classify + NEVER write", () => {
   it("runs ONE platform per call when scoped (avoids the Apify concurrency limit)", async () => {
     const store = getStore();
     await ensureSeedData(store);
-    let ttCalls = 0;
+    let ttStarts = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
         const u = String(url);
-        let body: unknown = [];
-        if (u.includes("/runs?desc")) body = { data: { items: [{ usageTotalUsd: 0.2 }] } };
-        else if (u.includes(`/acts/${TT_ACTOR}/run-sync-get-dataset-items`)) {
-          ttCalls++;
-          body = [ttItem("900", "2026-05-01T00:00:00.000Z", 4000)];
-        } else if (u.includes("run-sync-get-dataset-items")) {
-          throw new Error("no other platform should be called");
+        const start = u.match(/\/acts\/([^/]+)\/runs$/);
+        if (start) {
+          if (start[1] !== TT_ACTOR) throw new Error("no other platform should be called");
+          ttStarts++;
+          return { ok: true, status: 201, json: async () => ({ data: { id: "run-tt", status: "SUCCEEDED", defaultDatasetId: `ds-${TT_ACTOR}`, usageTotalUsd: 0.2 } }) } as unknown as Response;
         }
-        return { ok: true, status: 201, json: async () => body } as unknown as Response;
+        if (u.match(/\/datasets\/ds-([^/]+)\/items/)) {
+          return { ok: true, status: 200, json: async () => [ttItem("900", "2026-05-01T00:00:00.000Z", 4000)] } as unknown as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({ data: { status: "SUCCEEDED" } }) } as unknown as Response;
       }),
     );
     const report = await runBackfillDryRun(store, CFG, { platforms: ["tiktok"] });
     expect(report.platforms.map((p) => p.platform)).toEqual(["tiktok"]); // ONLY tiktok
-    expect(ttCalls).toBe(1);
+    expect(ttStarts).toBe(1);
     expect(report.platforms[0].byClass.suggested_bootcamp).toBe(1);
   });
 
@@ -234,8 +242,10 @@ describe("backfill safety", () => {
     const src = read("src/lib/backfill.ts");
     // Backfill must NOT consult the ongoing fallback gate or the per-run gate.
     expect(src).not.toMatch(/apifyFallbackAllowedByConfig|apifyAllowedNow|isApifyFallbackEnabled/);
-    // It enumerates via the actor run endpoint directly, gated by its own caps.
-    expect(src).toMatch(/run-sync-get-dataset-items/);
+    // It enumerates via the Apify actor API directly (start run → poll → dataset),
+    // gated by its own caps — not via the ongoing pipeline/provider gate.
+    expect(src).toMatch(/api\.apify\.com\/v2\/acts/);
+    expect(src).toMatch(/\/datasets\//);
     expect(src).toMatch(/maxProviderCalls/);
   });
   it("ongoing refresh still never auto-calls Apify (kill switch intact)", () => {
