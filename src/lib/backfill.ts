@@ -160,7 +160,7 @@ const IMPORTABLE: ReadonlySet<CandidateClass> = new Set<CandidateClass>([
   "overlap",
   "invalid_date",
 ]);
-const MAX_DISPLAY = 80;
+const MAX_DISPLAY = 200; // hold the full back-catalog so the review queue is complete
 
 /**
  * Run one Apify actor (date-floored) and return normalized videos + the run's
