@@ -5,6 +5,7 @@
 // 16:9 slide canvas, print, and presentation modes.
 
 import { buildReportsData } from "@/lib/reports-data";
+import { parsePublicCampaignFilter } from "@/lib/campaigns";
 import { DEFAULT_FILTERS, type MetricFocus, type ReportType } from "@/lib/reports";
 import type { TimeRange } from "@/lib/queries";
 import type { Platform } from "@/lib/types";
@@ -44,7 +45,10 @@ export default async function ReportsPage({
 }) {
   const sp = await searchParams;
   const range = parseRange(sp.range);
-  const data = await buildReportsData(range);
+  // Campaign scoping (Bootcamp / MTL / All) via ?campaign= — affects every
+  // report metric (reach, growth, platforms, momentum, comments, top drivers).
+  const campaignFilter = parsePublicCampaignFilter(sp.campaign);
+  const data = await buildReportsData(range, campaignFilter);
 
   // Validate the concept id against real concepts; unknown → "all".
   const conceptParam = one(sp.concept);

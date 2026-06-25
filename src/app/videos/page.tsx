@@ -6,6 +6,8 @@
 import { PageHeader } from "@/components/layout/page-header";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
+import { CampaignSwitcher } from "@/components/dashboard/campaign-switcher";
+import { parsePublicCampaignFilter } from "@/lib/campaigns";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { getVideosPageData, type TimeRange } from "@/lib/queries";
 import { VideosExplorer } from "./videos-explorer";
@@ -23,8 +25,9 @@ export default async function VideosPage({
 }) {
   const sp = await searchParams;
   const range = parseRange(sp.range);
+  const campaignFilter = parsePublicCampaignFilter(sp.campaign);
   const { rows, episodes, range: active, rangeLabel, platformCount, lastUpdatedAt, historyStart } =
-    await getVideosPageData(range);
+    await getVideosPageData(range, campaignFilter);
 
   const trackedCount = rows.filter((r) => !r.video.hidden).length;
   const subtitle = (
@@ -56,7 +59,8 @@ export default async function VideosPage({
         subtitle={subtitle}
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <RangeSwitcher active={active} basePath="/videos" />
+            <CampaignSwitcher active={campaignFilter} basePath="/videos" range={active} />
+            <RangeSwitcher active={active} basePath="/videos" campaign={campaignFilter} />
             <AutoRefreshNote />
           </div>
         }

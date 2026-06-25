@@ -4,6 +4,8 @@
 
 import type { Metadata } from "next";
 import { getCommentsPageData, getHealth } from "@/lib/queries";
+import { parsePublicCampaignFilter } from "@/lib/campaigns";
+import { CampaignSwitcher } from "@/components/dashboard/campaign-switcher";
 import { formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataNotice } from "@/components/layout/data-notice";
@@ -16,8 +18,13 @@ export const metadata: Metadata = {
   title: "Comments — Wachter Creator Campaign Dashboard",
 };
 
-export default async function CommentsPage() {
-  const [data, health] = await Promise.all([getCommentsPageData(), getHealth()]);
+export default async function CommentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const campaignFilter = parsePublicCampaignFilter((await searchParams).campaign);
+  const [data, health] = await Promise.all([getCommentsPageData(campaignFilter), getHealth()]);
   const count = data.comments.length;
 
   return (
@@ -26,7 +33,12 @@ export default async function CommentsPage() {
       <PageHeader
         title="Comments"
         subtitle={`${formatNumber(count)} ${count === 1 ? "comment" : "comments"} across 4 platforms`}
-        actions={<AutoRefreshNote />}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <CampaignSwitcher active={campaignFilter} basePath="/comments" />
+            <AutoRefreshNote />
+          </div>
+        }
       />
       <CommentFeed
         comments={data.comments}

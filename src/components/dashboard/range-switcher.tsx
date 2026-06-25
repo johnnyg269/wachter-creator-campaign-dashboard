@@ -15,11 +15,15 @@ const RANGES: Array<{ value: TimeRange; label: string }> = [
 export function RangeSwitcher({
   active,
   basePath = "/",
+  campaign,
 }: {
   active: TimeRange;
   /** Page the range links point at — "/" for the dashboard, "/videos" etc. */
   basePath?: string;
+  /** Preserve the current ?campaign= filter when switching range. */
+  campaign?: string;
 }) {
+  const campaignQs = campaign && campaign !== "all" ? `&campaign=${campaign}` : "";
   return (
     <div
       className="flex items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5"
@@ -29,7 +33,7 @@ export function RangeSwitcher({
       {RANGES.map((r) => (
         <Link
           key={r.value}
-          href={`${basePath}?range=${r.value}`}
+          href={`${basePath}?range=${r.value}${campaignQs}`}
           aria-current={r.value === active ? "page" : undefined}
           className={clsx(
             "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",

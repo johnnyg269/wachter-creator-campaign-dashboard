@@ -21,6 +21,7 @@ import { EpisodeManager } from "./episode-manager";
 import { ReviewQueue } from "./review-queue";
 import { DiscoveryControls } from "./discovery-controls";
 import { ThumbnailRepairButton } from "./thumbnail-repair-button";
+import { CampaignManager } from "./campaign-manager";
 import { ReviewCandidates } from "./review-candidates";
 
 export const dynamic = "force-dynamic";
@@ -327,6 +328,33 @@ export default async function AdminPage() {
                   </div>
                 )}
               </div>
+            </CardBody>
+          </Card>
+        </section>
+
+        <section id="campaigns">
+          <Card>
+            <CardHeader
+              title="Campaigns & tracking"
+              subtitle="Assign videos to MTL or Bootcamp, or remove from tracking (soft delete — leaves all public totals, recoverable here). Untagged active videos count as MTL."
+            />
+            <CardBody>
+              <CampaignManager
+                videos={data.videos.map((v) => ({
+                  id: v.id,
+                  platform: v.platform,
+                  title: v.title,
+                  urlSlug: (() => {
+                    try {
+                      return new URL(v.originalUrl).pathname;
+                    } catch {
+                      return v.originalUrl;
+                    }
+                  })(),
+                  campaign: v.campaign,
+                  trackingStatus: v.trackingStatus,
+                }))}
+              />
             </CardBody>
           </Card>
         </section>

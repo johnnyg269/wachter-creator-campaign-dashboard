@@ -85,6 +85,14 @@ import {
   UNASSIGNED_EPISODE_NAME,
   type IneligibilityReason,
 } from "./eligibility";
+import {
+  matchesCampaign,
+  videoCampaign,
+  videoTrackingStatus,
+  type CampaignFilter,
+  type CampaignSlug,
+  type TrackingStatus,
+} from "./campaigns";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -199,16 +207,26 @@ export function toPublicHealth(health: HealthSummary): PublicHealthSummary {
 // Shared loading
 // ---------------------------------------------------------------------------
 
+/** A page-facing video with its resolved campaign + tracking status attached
+ *  (rawJson is stripped, so these derived fields carry the campaign signal). */
+export type ScopedVideo = Video & { campaign: CampaignSlug | null; trackingStatus: TrackingStatus };
+
 export interface CampaignData {
   campaign: Campaign;
-  videos: Video[];
+  videos: ScopedVideo[];
   metricsByVideo: Map<string, VideoMetrics>;
   snapshotsByVideo: Map<string, MetricSnapshot[]>;
   episodes: EpisodeGroup[];
   profiles: PlatformProfile[];
 }
 
-export async function loadCampaignData(includeHidden = false): Promise<CampaignData> {
+export async function loadCampaignData(
+  includeHidden = false,
+  campaignFilter: CampaignFilter = "all",
+  /** Admin contexts pass true to bypass the campaign filter so excluded /
+   *  unassigned videos remain visible for management. */
+  adminUnscoped = false,
+): Promise<CampaignData> {
   const store = getStore();
   const campaign = await ensureSeedData(store);
   const episodes = await store.listEpisodeGroups();
@@ -229,11 +247,26 @@ export async function loadCampaignData(includeHidden = false): Promise<CampaignD
     .filter((v) => isCampaignEligible(v, startMs, unassignedId) && !isReviewCandidate(v))
     .map((v) => ({
       ...v,
+      // Resolve campaign + tracking BEFORE stripping rawJson — these derived
+      // fields carry the campaign signal to every downstream total/chart.
+      campaign: videoCampaign(v),
+      trackingStatus: videoTrackingStatus(v),
       rawJson: null,
       errorMessage: v.errorMessage
         ? v.errorMessage.replace(/apify|socialcrawl/gi, "collector")
         : null,
-    }));
+    }))
+    // Campaign filter (THE second chokepoint): every downstream total/list/chart/
+    // milestone derives from this set, so scoping here scopes the whole dashboard.
+    // "all" excludes admin-excluded + explicitly-unassigned (campaign === null).
+    // Admin contexts pass adminUnscoped to keep excluded/unassigned visible.
+    // Defense-in-depth: on any non-admin path, removed-from-tracking videos are
+    // dropped UNCONDITIONALLY (even under includeHidden:true, e.g. /alerts, and
+    // even if a filter like "unassigned" would otherwise match a null campaign).
+    .filter(
+      (v) =>
+        adminUnscoped || (v.trackingStatus !== "excluded" && matchesCampaign(v.campaign, campaignFilter)),
+    );
   // Scope snapshots to the eligible video set too — otherwise the aggregate
   // trend (and periodDelta / velocity milestone / reports overallTrend, which
   // all read snapshotsByVideo) would still sum quarantined videos' snapshots
@@ -436,9 +469,12 @@ function rangeToMs(range: TimeRange): number | null {
   }
 }
 
-export async function getDashboardData(range: TimeRange = "7d"): Promise<DashboardData> {
+export async function getDashboardData(
+  range: TimeRange = "7d",
+  campaignFilter: CampaignFilter = "all",
+): Promise<DashboardData> {
   const store = getStore();
-  const data = await loadCampaignData();
+  const data = await loadCampaignData(false, campaignFilter);
   const health = await getHealth();
   const { videos, metricsByVideo, snapshotsByVideo, campaign } = data;
   const all = [...metricsByVideo.values()];
@@ -501,8 +537,11 @@ export async function getDashboardData(range: TimeRange = "7d"): Promise<Dashboa
       ? { video: fastest[0].video, gained24h: fastest[0].delta24h.value }
       : null;
 
-  const comments = await store.listComments({ limit: 500 });
   const videoById = new Map(videos.map((v) => [v.id, v]));
+  // Scope comments to the campaign-filtered (and non-excluded) video set so
+  // comment stats / response opportunities / recent comments never count
+  // off-campaign or removed-from-tracking videos.
+  const comments = (await store.listComments({ limit: 500 })).filter((c) => videoById.has(c.videoId));
 
   const tagCounts = new Map<string, number>();
   for (const c of comments) for (const t of c.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
@@ -753,9 +792,14 @@ function topCommentSignal(comments: Comment[]): string | null {
   return top ? top[0] : null;
 }
 
-export async function getVideosPageData(range: TimeRange = "7d"): Promise<VideosPageData> {
+export async function getVideosPageData(
+  range: TimeRange = "7d",
+  campaign: CampaignFilter = "all",
+): Promise<VideosPageData> {
   const store = getStore();
-  const data = await loadCampaignData(true);
+  // includeHidden:false — excluded (removed-from-tracking) videos never appear
+  // on the public videos grid (they're hidden); the campaign filter scopes the rest.
+  const data = await loadCampaignData(false, campaign);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
   const profileById = new Map(data.profiles.map((p) => [p.id, p.profileUrl]));
 
@@ -829,23 +873,27 @@ export interface CommentsPageData {
   episodes: EpisodeGroup[];
 }
 
-export async function getCommentsPageData(): Promise<CommentsPageData> {
+export async function getCommentsPageData(campaign: CampaignFilter = "all"): Promise<CommentsPageData> {
   const store = getStore();
-  const data = await loadCampaignData();
-  const comments = await store.listComments({ limit: 1000 });
+  const data = await loadCampaignData(false, campaign);
+  const allComments = await store.listComments({ limit: 1000 });
   const videoById = new Map(data.videos.map((v) => [v.id, v]));
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
+  // Scope comments to the campaign-filtered video set (a comment whose video is
+  // outside the active campaign/excluded is dropped — never an orphan row).
   return {
     campaign: data.campaign,
-    comments: comments.map((c) => {
-      const video = videoById.get(c.videoId) ?? null;
-      const { rawJson: _rawJson, ...pub } = c; // never ship the raw provider payload publicly
-      return {
-        ...pub,
-        video,
-        episodeName: video?.episodeGroupId ? (episodeById.get(video.episodeGroupId) ?? null) : null,
-      };
-    }),
+    comments: allComments
+      .filter((c) => videoById.has(c.videoId))
+      .map((c) => {
+        const video = videoById.get(c.videoId) ?? null;
+        const { rawJson: _rawJson, ...pub } = c; // never ship the raw provider payload publicly
+        return {
+          ...pub,
+          video,
+          episodeName: video?.episodeGroupId ? (episodeById.get(video.episodeGroupId) ?? null) : null,
+        };
+      }),
     videos: data.videos,
     episodes: data.episodes,
   };
@@ -863,9 +911,9 @@ export interface PlatformsPageData {
   commentCounts: Record<Platform, number>;
 }
 
-export async function getPlatformsPageData(): Promise<PlatformsPageData> {
+export async function getPlatformsPageData(campaign: CampaignFilter = "all"): Promise<PlatformsPageData> {
   const store = getStore();
-  const data = await loadCampaignData();
+  const data = await loadCampaignData(false, campaign);
   const health = await getHealth();
   const now = new Date();
   const from = new Date(now.getTime() - 7 * DAY_MS);
@@ -877,7 +925,10 @@ export async function getPlatformsPageData(): Promise<PlatformsPageData> {
     }
     trendByPlatform[platform] = aggregateTrend(map, from, now, 28);
   }
-  const comments = await store.listComments();
+  // Scope comment counts to the campaign-filtered video set (excludes
+  // off-campaign + removed-from-tracking videos).
+  const videoIds = new Set(data.videos.map((v) => v.id));
+  const comments = (await store.listComments()).filter((c) => videoIds.has(c.videoId));
   const commentCounts = { tiktok: 0, youtube: 0, instagram: 0, facebook: 0 } as Record<Platform, number>;
   for (const c of comments) commentCounts[c.platform]++;
   return {
@@ -985,7 +1036,7 @@ export interface AdminPageData {
   campaign: Campaign;
   health: HealthSummary;
   profiles: PlatformProfile[];
-  videos: Array<Video & { episodeName: string | null }>;
+  videos: Array<ScopedVideo & { episodeName: string | null }>;
   episodes: EpisodeGroup[];
   refreshRuns: RefreshRun[];
   providerConfigs: ProviderConfig[];
@@ -1200,7 +1251,9 @@ export function dashboardMilestoneInput(data: DashboardData, rangeLabel: string)
 
 export async function getAdminPageData(): Promise<AdminPageData> {
   const store = getStore();
-  const data = await loadCampaignData(true);
+  // Unscoped: admin manages ALL videos — every campaign, plus unassigned and
+  // excluded (removed-from-tracking) records.
+  const data = await loadCampaignData(true, "all", true);
   const episodeById = new Map(data.episodes.map((e) => [e.id, e.name]));
   const health = await getHealth();
   // Full (uncapped) milestone list for admin diagnostics — lifetime view.

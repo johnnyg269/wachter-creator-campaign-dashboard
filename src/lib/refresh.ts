@@ -27,6 +27,7 @@ import {
   isReviewCandidate,
   UNASSIGNED_EPISODE_NAME,
 } from "./eligibility";
+import { isAdminExcluded } from "./campaigns";
 import { applyMonotonicViews, engagementRate } from "./metrics";
 import { initialThumbState, mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
 import { isTikTokCdnHost } from "./thumb-proxy";
@@ -635,14 +636,18 @@ async function refreshPlatform(
             isSeed: false,
             episodeGroupId: null as string | null,
           };
-          const canHeal = isReviewCandidate(existing)
-            ? // a review candidate only auto-promotes once it clearly qualifies for auto-add (<=72h)
-              classifyDiscoveryCandidate(
-                { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
-                { startMs, lookbackMs, now: nowMs },
-              ).decision === "add"
-            : // any other excluded record heals on a valid eligible provider date (>= start)
-              isCampaignEligible(nInput, startMs, null);
+          const canHeal = isAdminExcluded(existing)
+            ? // Admin DELIBERATELY removed this from tracking — never auto-heal /
+              // re-add it via discovery; only an admin Restore brings it back.
+              false
+            : isReviewCandidate(existing)
+              ? // a review candidate only auto-promotes once it clearly qualifies for auto-add (<=72h)
+                classifyDiscoveryCandidate(
+                  { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
+                  { startMs, lookbackMs, now: nowMs },
+                ).decision === "add"
+              : // any other excluded record heals on a valid eligible provider date (>= start)
+                isCampaignEligible(nInput, startMs, null);
           if (canHeal) {
             await healExistingVideo(store, existing, n);
             disc.healed++;

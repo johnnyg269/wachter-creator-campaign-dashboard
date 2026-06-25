@@ -4,6 +4,8 @@
 
 import { ExternalLink, TrendingUp } from "lucide-react";
 import { getPlatformsPageData } from "@/lib/queries";
+import { parsePublicCampaignFilter } from "@/lib/campaigns";
+import { CampaignSwitcher } from "@/components/dashboard/campaign-switcher";
 import type { PlatformStats } from "@/lib/queries";
 import type { TrendPoint } from "@/lib/metrics";
 import { PLATFORMS, PLATFORM_LABELS, type Platform, type Video } from "@/lib/types";
@@ -150,8 +152,14 @@ function PlatformCard({
   );
 }
 
-export default async function PlatformsPage() {
-  const { campaign, health, stats, trendByPlatform, commentCounts } = await getPlatformsPageData();
+export default async function PlatformsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const campaignFilter = parsePublicCampaignFilter((await searchParams).campaign);
+  const { campaign, health, stats, trendByPlatform, commentCounts } =
+    await getPlatformsPageData(campaignFilter);
 
   const statsByPlatform = new Map(stats.map((s) => [s.platform, s]));
   const ordered = PLATFORMS.map((p) => statsByPlatform.get(p)).filter(
@@ -180,7 +188,12 @@ export default async function PlatformsPage() {
       <PageHeader
         title="Platforms"
         subtitle={`${campaign.creatorName} × ${campaign.company} — side-by-side performance across all four networks`}
-        actions={<AutoRefreshNote />}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <CampaignSwitcher active={campaignFilter} basePath="/platforms" />
+            <AutoRefreshNote />
+          </div>
+        }
       />
 
       {/* Comparison charts */}

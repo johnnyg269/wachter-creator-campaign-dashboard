@@ -8,6 +8,12 @@ import type { Video, VideoStatus } from "@/lib/types";
 import { isReviewCandidate } from "@/lib/eligibility";
 import { mergeThumbIntoRaw } from "@/lib/thumbnail-state";
 import {
+  campaignAssignmentPatch,
+  isAdminExcluded,
+  trackingPatch,
+  videoCampaign,
+} from "@/lib/campaigns";
+import {
   asTrimmedString,
   badRequest,
   guardAdmin,
@@ -128,10 +134,53 @@ export async function PATCH(
       }
     }
 
+    // Campaign assignment (schema-free: rawJson.campaign). "unassigned" keeps the
+    // video tracked but out of public All/MTL/Bootcamp scopes (still in admin).
+    if ("campaign" in body) {
+      const c = body.campaign;
+      if (c !== "mtl" && c !== "bootcamp" && c !== "unassigned") {
+        return badRequest('campaign must be "mtl", "bootcamp", or "unassigned"');
+      }
+      const base = patch.rawJson !== undefined ? patch.rawJson : video.rawJson;
+      patch.rawJson = campaignAssignmentPatch(base, c) as Video["rawJson"];
+      changes.push({ field: "campaign", oldValue: videoCampaign(video) ?? "unassigned", newValue: c });
+    }
+
+    // Remove-from-tracking / restore (SOFT delete — never touches snapshots or
+    // metric history). Excluded → hidden, so it leaves every public total/grid/
+    // chart/refresh; recoverable from the admin Excluded view.
+    if ("tracking" in body) {
+      const action = body.tracking;
+      if (action !== "exclude" && action !== "restore") {
+        return badRequest('tracking must be "exclude" or "restore"');
+      }
+      if (action === "exclude" && !reason) {
+        return badRequest("A reason is required to remove a video from tracking");
+      }
+      const base = patch.rawJson !== undefined ? patch.rawJson : video.rawJson;
+      const wasExcluded = isAdminExcluded(video);
+      patch.rawJson = trackingPatch(base, action, {
+        reason: reason ?? undefined,
+        now: new Date().toISOString(),
+      }) as Video["rawJson"];
+      // Exclude → hide. Restore → un-hide ONLY a video WE excluded (never
+      // surface a separately review/quarantine-hidden one). Tracking takes
+      // precedence over any standalone `hidden` change in the same request.
+      if (action === "exclude") patch.hidden = true;
+      else if (wasExcluded) patch.hidden = false;
+      const hiddenChangeIdx = changes.findIndex((c) => c.field === "hidden");
+      if (hiddenChangeIdx !== -1) changes.splice(hiddenChangeIdx, 1);
+      changes.push({
+        field: "tracking",
+        oldValue: wasExcluded ? "excluded" : "active",
+        newValue: action === "exclude" ? "excluded" : "active",
+      });
+    }
+
     // An admin-set thumbnail is "manual" — mark it so the discovery thumbnail
     // retry never auto-overwrites it with a provider value.
     if (typeof patch.thumbnailUrl === "string" && patch.thumbnailUrl) {
-      patch.rawJson = mergeThumbIntoRaw(video.rawJson, {
+      patch.rawJson = mergeThumbIntoRaw(patch.rawJson !== undefined ? patch.rawJson : video.rawJson, {
         status: "valid",
         attempts: 0,
         lastAttemptAt: new Date().toISOString(),

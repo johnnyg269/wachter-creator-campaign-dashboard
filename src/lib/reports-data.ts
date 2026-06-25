@@ -6,6 +6,7 @@
 
 import { getDashboardData, getEpisodesPageData, getVideosPageData, getCommentsPageData } from "./queries";
 import type { TimeRange } from "./queries";
+import type { CampaignFilter } from "./campaigns";
 import { PLATFORMS, type Platform } from "./types";
 import type {
   ReportComment,
@@ -22,12 +23,15 @@ const RECRUITING_TAGS = new Set(["hiring", "job/career", "apply", "bootcamp", "a
  * Build the full reports payload at the given range. Composes the existing
  * range-aware queries and maps everything down to public-safe primitives.
  */
-export async function buildReportsData(range: TimeRange): Promise<ReportsData> {
+export async function buildReportsData(
+  range: TimeRange,
+  campaign: CampaignFilter = "all",
+): Promise<ReportsData> {
   const [dashboard, videosPage, episodesPage, commentsPage] = await Promise.all([
-    getDashboardData(range),
-    getVideosPageData(range),
+    getDashboardData(range, campaign),
+    getVideosPageData(range, campaign),
     getEpisodesPageData(),
-    getCommentsPageData(),
+    getCommentsPageData(campaign),
   ]);
 
   const videos: ReportVideo[] = videosPage.rows

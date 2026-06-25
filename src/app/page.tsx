@@ -15,6 +15,8 @@ import clsx from "clsx";
 import Link from "next/link";
 import { MessagesSquare, Sparkles, TrendingUp } from "lucide-react";
 import { getDashboardData, dashboardMilestoneInput, type TimeRange } from "@/lib/queries";
+import { parsePublicCampaignFilter } from "@/lib/campaigns";
+import { CampaignSwitcher } from "@/components/dashboard/campaign-switcher";
 import { PLATFORM_LABELS, type Platform } from "@/lib/types";
 import type { TrendPoint } from "@/lib/metrics";
 import {
@@ -108,7 +110,8 @@ export default async function DashboardPage({
 }) {
   const sp = await searchParams;
   const range = parseRange(sp.range);
-  const data = await getDashboardData(range);
+  const campaign = parsePublicCampaignFilter(sp.campaign);
+  const data = await getDashboardData(range, campaign);
   const { health, kpis, momentum, commentStats } = data;
 
   const liveCount = health.platforms.filter((p) => p.sourceStatus === "live").length;
@@ -378,7 +381,10 @@ export default async function DashboardPage({
                 </p>
               )}
             </div>
-            <RangeSwitcher active={range} />
+            <div className="flex flex-wrap items-center gap-2">
+              <CampaignSwitcher active={campaign} range={range} />
+              <RangeSwitcher active={range} campaign={campaign} />
+            </div>
           </div>
 
           <div className="mt-4">
