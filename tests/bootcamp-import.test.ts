@@ -125,6 +125,13 @@ describe("classifyCandidate — manual assignment is the source of truth", () =>
   it("EXCLUDED/removed is never re-added → already_excluded (even if tagged)", () => {
     expect(cls({ existing: { videoId: "v1", campaign: "mtl", excluded: true } })).toBe("already_excluded");
   });
+  it("an existing match DOMINATES an unparseable URL (no downgrade to invalid_url)", () => {
+    // e.g. an already-tracked fb.watch/share reel whose URL form doesn't parse.
+    expect(cls({ parsed: null, existing: { videoId: "v1", campaign: "mtl", excluded: false } })).toBe("already_mtl");
+    expect(cls({ parsed: null, existing: { videoId: "v1", campaign: "mtl", excluded: true } })).toBe("already_excluded");
+    // still invalid_url when there is NO existing match.
+    expect(cls({ parsed: null, existing: null })).toBe("invalid_url");
+  });
 });
 
 // ── Phase 2A review fixes: campaign-aware restore floor + dry-run credit log ──
@@ -155,12 +162,18 @@ describe("dry-run route logs anchor-resolution credits (so the cap can't be unde
     expect(src).toMatch(/isSocialcrawlPlatform\(platform\)/);
     expect(src).toMatch(/dry-run anchor · 1cr/);
   });
-  it("is admin-gated: admin session OR constant-time CRON_SECRET bearer, fail-closed", () => {
+  it("is admin-gated via the shared fail-closed isAdminOrCronBearer guard, no query secret", () => {
     const src = readFileSync(path.join(process.cwd(), "src/app/api/admin/bootcamp-import/dry-run/route.ts"), "utf-8");
-    expect(src).toMatch(/checkAdminRequest\(req\) === null/);
-    expect(src).toMatch(/bearerMatches\(req\.headers\.get\("authorization"\), getCronSecret\(\)\)/);
-    expect(src).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/); // fail-closed
+    expect(src).toMatch(/isAdminOrCronBearer\(req\)/);
     expect(src).not.toMatch(/\?secret=/); // never a query-param secret
+  });
+  it("the shared guard requires a CONFIGURED password for the session path (no dev-open bypass when CRON_SECRET set)", () => {
+    const src = readFileSync(path.join(process.cwd(), "src/app/api/admin/_utils.ts"), "utf-8");
+    // The admin-session branch must require getAdminPassword() to be set, so an
+    // unset password + set cron secret can't open the route via dev-open session.
+    expect(src).toMatch(/getAdminPassword\(\) && checkAdminRequest\(req\) === null/);
+    expect(src).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/); // fail-closed when neither set
+    expect(src).toMatch(/bearerMatches\(req\.headers\.get\("authorization"\), getCronSecret\(\)\)/);
   });
 });
 

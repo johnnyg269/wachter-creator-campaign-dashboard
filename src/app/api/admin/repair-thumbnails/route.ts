@@ -5,27 +5,17 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
-import { bearerMatches, checkAdminRequest } from "@/lib/auth";
-import { getAdminPassword, getCronSecret } from "@/lib/config";
 import { getStore } from "@/lib/store";
 import { repairMissingThumbnails, summarizeRepair } from "@/lib/thumbnail-repair";
+import { isAdminOrCronBearer } from "../_utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-function authorized(req: NextRequest): boolean {
-  // Fail-closed for this privileged write: if neither admin auth nor a cron
-  // secret is configured, never run (don't inherit the dev-open admin gate).
-  if (!getAdminPassword() && !getCronSecret()) return false;
-  // Admin session (checkAdminRequest returns null when authenticated) OR the
-  // server CRON_SECRET as a constant-time Bearer header (never a query param,
-  // which would leak the secret into logs/history/Referer).
-  if (checkAdminRequest(req) === null) return true;
-  return bearerMatches(req.headers.get("authorization"), getCronSecret());
-}
-
 async function handle(req: NextRequest): Promise<NextResponse> {
-  if (!authorized(req)) {
+  // Real admin session (password-configured) OR CRON_SECRET bearer — shared,
+  // fail-closed; the dev-open session path never grants access to this write.
+  if (!isAdminOrCronBearer(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   try {

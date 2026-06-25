@@ -259,13 +259,16 @@ describe("repairMissingThumbnails (immediate, server-side)", () => {
 // ── Repair route auth (admin OR cron secret), never public ─────────────────────
 describe("repair-thumbnails route is gated", () => {
   const src = read("src/app/api/admin/repair-thumbnails/route.ts");
-  it("requires an admin session or the CRON_SECRET bearer (header-only, fail-closed)", () => {
-    expect(src).toMatch(/checkAdminRequest/);
-    expect(src).toMatch(/bearerMatches/);
+  it("requires an admin session or the CRON_SECRET bearer (shared fail-closed guard)", () => {
+    expect(src).toMatch(/isAdminOrCronBearer\(req\)/);
     expect(src).toMatch(/401/);
-    // No query-param secret (would leak into logs); fail-closed when unconfigured.
+    // No query-param secret (would leak into logs).
     expect(src).not.toMatch(/searchParams\.get\("secret"\)/);
-    expect(src).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/);
+    // The shared guard is fail-closed + requires a configured password for the
+    // session path (no dev-open bypass when CRON_SECRET is set).
+    const utils = read("src/app/api/admin/_utils.ts");
+    expect(utils).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/);
+    expect(utils).toMatch(/getAdminPassword\(\) && checkAdminRequest\(req\) === null/);
     // Manual "Repair now" forces a detail retry of previously-failed covers.
     expect(src).toMatch(/force: true/);
   });

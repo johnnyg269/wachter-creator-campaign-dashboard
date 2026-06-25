@@ -25,7 +25,9 @@ import { CampaignManager } from "./campaign-manager";
 import { ReviewCandidates } from "./review-candidates";
 import { CreditPanel } from "./credit-panel";
 import { BootcampImport } from "./bootcamp-import";
+import { BootcampBackfill } from "./bootcamp-backfill";
 import { getBootcampImportDefaults } from "@/lib/bootcamp-import";
+import { getBackfillConfig } from "@/lib/config";
 import { refreshTierFor } from "@/lib/refresh-tiers";
 
 export const dynamic = "force-dynamic";
@@ -243,11 +245,32 @@ export default async function AdminPage() {
         <section id="bootcamp">
           <Card>
             <CardHeader
-              title="Bootcamp import"
-              subtitle="Configure the import window per platform and run a credit-safe dry run (no writes). Approve & write lands in Phase 2B."
+              title="Bootcamp import — automatic backfill discovery"
+              subtitle="Primary workflow: automatically discover the Bootcamp back-catalog from April 11 forward, dry-run first, then approve. One-time, admin-triggered, cost-capped, no writes here. Ongoing metrics stay on SocialCrawl; Apify is not re-enabled for normal refresh."
             />
-            <CardBody>
-              <BootcampImport defaults={getBootcampImportDefaults()} />
+            <CardBody className="space-y-6">
+              {(() => {
+                const bf = getBackfillConfig();
+                return (
+                  <BootcampBackfill
+                    defaults={{
+                      startDate: bf.startDate,
+                      provider: bf.provider,
+                      maxProviderCalls: bf.maxProviderCalls,
+                      maxCostUsd: bf.maxCostUsd,
+                      enabled: bf.enabled,
+                    }}
+                  />
+                );
+              })()}
+              <details className="rounded-lg border border-border bg-surface px-3 py-2">
+                <summary className="cursor-pointer text-xs font-medium text-muted">
+                  Manual fallback — paste/CSV URLs (edge cases only)
+                </summary>
+                <div className="mt-3">
+                  <BootcampImport defaults={getBootcampImportDefaults()} />
+                </div>
+              </details>
             </CardBody>
           </Card>
         </section>

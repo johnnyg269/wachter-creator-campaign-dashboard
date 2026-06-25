@@ -195,9 +195,10 @@ export function classifyCandidate(args: {
 }): { classification: CandidateClass; reason: string } {
   const { parsed, publishedAt, existing, bootcampStartMs, mtlStartMs, source } = args;
 
-  if (!parsed || !parsed.externalVideoId) {
-    return { classification: "invalid_url", reason: "Could not parse a video id from the URL" };
-  }
+  // An existing DB match is the source of truth and DOMINATES — even when the
+  // URL form doesn't parse (e.g. an fb.watch/share reel already tracked): a
+  // confirmed already-MTL / already-Bootcamp / removed record must never be
+  // downgraded to invalid_url (which would drop the match + corrupt the buckets).
   if (existing) {
     if (existing.excluded)
       return { classification: "already_excluded", reason: "Previously removed from tracking — not re-added" };
@@ -206,6 +207,9 @@ export function classifyCandidate(args: {
     if (existing.campaign === "bootcamp")
       return { classification: "already_bootcamp", reason: "Already assigned to Bootcamp — duplicate" };
     return { classification: "already_unassigned", reason: "Already tracked (unassigned) — assign manually" };
+  }
+  if (!parsed || !parsed.externalVideoId) {
+    return { classification: "invalid_url", reason: "Could not parse a video id from the URL" };
   }
 
   if (publishedAt === null) {

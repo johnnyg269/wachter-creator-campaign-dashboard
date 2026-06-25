@@ -2,7 +2,8 @@
 // consistent { ok, error } JSON envelopes. Never log or echo secrets here.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { checkAdminRequest } from "@/lib/auth";
+import { bearerMatches, checkAdminRequest } from "@/lib/auth";
+import { getAdminPassword, getCronSecret } from "@/lib/config";
 import { PLATFORMS, type Platform } from "@/lib/types";
 
 /** Returns a 401 response when the request is not an authenticated admin. */
@@ -12,6 +13,21 @@ export function guardAdmin(req: NextRequest): NextResponse | null {
     return NextResponse.json({ ok: false, error: reason }, { status: 401 });
   }
   return null;
+}
+
+/**
+ * Privileged admin ACTION gate (cost-bearing / write routes): a REAL
+ * authenticated admin session — which REQUIRES a configured ADMIN_PASSWORD, so
+ * the dev-open "no password → open" session semantics never grant access here —
+ * OR the server CRON_SECRET as a constant-time Bearer header. Fail-closed when
+ * NEITHER secret is configured. This prevents the trap where a deployment sets
+ * CRON_SECRET (for the scheduler) but not ADMIN_PASSWORD: such a route must stay
+ * bearer-only, never world-open via the dev-open session path.
+ */
+export function isAdminOrCronBearer(req: NextRequest): boolean {
+  if (!getAdminPassword() && !getCronSecret()) return false;
+  if (getAdminPassword() && checkAdminRequest(req) === null) return true;
+  return bearerMatches(req.headers.get("authorization"), getCronSecret());
 }
 
 /** Parses a JSON object body; null when missing/invalid/not an object. */

@@ -169,6 +169,50 @@ export function getBootcampStartDateEt(): string {
 }
 
 // ---------------------------------------------------------------------------
+// One-time Bootcamp BACKFILL discovery (Phase 2B). A SEPARATE lane from ongoing
+// metrics: it enumerates the historical back-catalog from BACKFILL_START_DATE
+// forward via a chosen provider (e.g. Apify profile scrapers that paginate,
+// unlike SocialCrawl's ~10-item profile window). Admin-triggered only, dry-run
+// first, hard cost/call caps, NEVER on cron, NEVER part of ongoing refresh.
+// These knobs affect BACKFILL ONLY — they do not touch the ongoing-Apify kill
+// switch (apifyFallbackAllowedByConfig stays independent + off by default).
+// ---------------------------------------------------------------------------
+
+export type BackfillProvider = "none" | "apify";
+
+export interface BackfillConfig {
+  /** Master switch — backfill discovery never runs unless this is true. */
+  enabled: boolean;
+  /** Which provider enumerates the back-catalog. "none" → disabled. */
+  provider: BackfillProvider;
+  /** Hard cap on provider calls (actor runs / API pages) for one backfill. */
+  maxProviderCalls: number;
+  /** Hard cap on estimated USD cost for one backfill run. */
+  maxCostUsd: number;
+  /** Earliest publish date to discover (ET, YYYY-MM-DD). */
+  startDate: string;
+}
+
+export function getBackfillConfig(): BackfillConfig {
+  const provRaw = (process.env.BACKFILL_DISCOVERY_PROVIDER ?? "none").trim().toLowerCase();
+  const provider: BackfillProvider = provRaw === "apify" ? "apify" : "none";
+  const enabledFlag = process.env.BACKFILL_DISCOVERY_ENABLED;
+  const enabled = enabledFlag === "1" || enabledFlag?.toLowerCase() === "true";
+  const num = (name: string, fallback: number) => {
+    const n = Number(process.env[name]);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  const startRaw = process.env.BACKFILL_START_DATE?.trim();
+  return {
+    enabled: Boolean(enabled),
+    provider,
+    maxProviderCalls: num("BACKFILL_MAX_PROVIDER_CALLS", 10),
+    maxCostUsd: num("BACKFILL_MAX_COST_USD", 5),
+    startDate: startRaw && /^\d{4}-\d{2}-\d{2}$/.test(startRaw) ? startRaw : getBootcampStartDateEt(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Campaign seed data (URLs provided at campaign kickoff)
 // ---------------------------------------------------------------------------
 

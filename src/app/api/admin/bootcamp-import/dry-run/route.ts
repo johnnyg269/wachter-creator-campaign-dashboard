@@ -14,25 +14,16 @@ import {
   type BootcampProviderAdapter,
 } from "@/lib/bootcamp-import";
 import { isSocialcrawlPlatform } from "@/lib/credit-policy";
-import { bearerMatches, checkAdminRequest } from "@/lib/auth";
-import { getAdminPassword, getCronSecret } from "@/lib/config";
 import type { Platform } from "@/lib/types";
-import { readJsonObject, serverError } from "../../_utils";
+import { isAdminOrCronBearer, readJsonObject, serverError } from "../../_utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-// Admin-only, but (like repair-thumbnails / refresh) also accepts the server
-// CRON_SECRET as a constant-time Bearer header so the SAME read-only dry run can
-// be triggered server-side for verification. Fail-closed when neither is set.
-function authorized(req: NextRequest): boolean {
-  if (!getAdminPassword() && !getCronSecret()) return false;
-  if (checkAdminRequest(req) === null) return true;
-  return bearerMatches(req.headers.get("authorization"), getCronSecret());
-}
-
+// Admin session (real, password-configured) OR CRON_SECRET bearer — the shared
+// fail-closed gate; the dev-open session path never grants access here.
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  if (!authorized(req)) {
+  if (!isAdminOrCronBearer(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
