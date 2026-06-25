@@ -88,4 +88,11 @@ export interface PlatformFetchOptions {
   /** Max per-video comment fetches allowed this call (in-run credit budget so a
    *  single cycle cannot overshoot the SocialCrawl daily cap). Unset = unlimited. */
   commentBudget?: number;
+  /**
+   * Option B (Phase 2): restrict the per-post comment-text + per-post detail
+   * (engagement) calls to THESE videos only — the hot-MTL subset — instead of
+   * every tracked video. Metrics for the rest still come from the cheap profile
+   * sweep. Unset ⇒ all `videos` (back-compat).
+   */
+  commentTargets?: Video[];
 }

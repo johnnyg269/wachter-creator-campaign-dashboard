@@ -77,6 +77,7 @@ export interface ScCall {
   status: number;
   json: ScEnvelope | null;
   creditsUsed: number;
+  creditsRemaining: number | null;
   cached: boolean;
 }
 
@@ -139,9 +140,12 @@ function pickThumbnail(post: ScPost): string | null {
   return null;
 }
 
-/** Encode credit usage into the attempt log without a schema change. */
+/** Encode credit usage into the attempt log without a schema change. The
+ *  `rem:<n>` token carries SocialCrawl's reported credits_remaining so the admin
+ *  credit panel can surface the live balance (credit-policy parses it). */
 function describe(platform: Platform, kind: string, call: ScCall, extra = ""): string {
-  return `socialcrawl ${platform} ${kind} · ${call.creditsUsed}cr · cache:${call.cached ? "hit" : "miss"}${extra ? ` · ${extra}` : ""}`;
+  const rem = call.creditsRemaining !== null ? ` · rem:${call.creditsRemaining}` : "";
+  return `socialcrawl ${platform} ${kind} · ${call.creditsUsed}cr · cache:${call.cached ? "hit" : "miss"}${rem}${extra ? ` · ${extra}` : ""}`;
 }
 
 export class SocialCrawlProvider implements SocialPlatformProvider {
@@ -188,7 +192,13 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
       // Never include the key (it's only in the header, not the message).
       throw new Error(`SocialCrawl ${path.split("?")[0]} failed (HTTP ${res.status})`);
     }
-    return { status: res.status, json, creditsUsed: json?.credits_used ?? 0, cached: Boolean(json?.cached) };
+    return {
+      status: res.status,
+      json,
+      creditsUsed: json?.credits_used ?? 0,
+      creditsRemaining: typeof json?.credits_remaining === "number" ? json.credits_remaining : null,
+      cached: Boolean(json?.cached),
+    };
   }
 
   private itemsOf(json: ScEnvelope | null): ScItem[] {
@@ -337,6 +347,10 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
     opts: PlatformFetchOptions = {},
   ): Promise<PlatformFetchResult> {
     const wantComments = opts.wantComments ?? true;
+    // Option B: per-post comment-text + per-post detail (engagement) calls run
+    // only for the hot-MTL subset when the caller restricts them; metrics for
+    // everything else still come from the cheap profile sweep below.
+    const commentTargets = opts.commentTargets ?? videos;
     const attempts: AttemptDraft[] = [];
     const path = this.profilePath(profile);
     if (!path) {
@@ -361,13 +375,32 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
       error: byId.size > 0 ? null : "SocialCrawl returned no posts",
     });
 
+    // In-run SocialCrawl credit budget shared across BOTH the FB per-post detail
+    // tier (step 2) and the comment-text tier (step 3) — a single comment cycle
+    // can never overshoot the daily cap, even with many hot-MTL FB reels.
+    let budget = opts.commentBudget ?? Infinity;
+
     // 2) Comment-detail tier: Facebook's reels list returns views only, so on a
     // detail cycle fetch per-post engagement (likes/comments/shares) for the
-    // TRACKED reels only — never broad discovery.
+    // TRACKED reels only — never broad discovery. Each /facebook/post = 1 credit.
     if (wantComments && this.platform === "facebook") {
-      for (const v of videos) {
+      for (const v of commentTargets) {
+        if (budget <= 0) {
+          attempts.push({
+            provider: "socialcrawl",
+            actorId: null,
+            kind: "detail",
+            inputDescription: `socialcrawl facebook post · skipped (credit budget reached)`,
+            success: true,
+            runId: null,
+            itemCount: 0,
+            error: null,
+          });
+          break;
+        }
         try {
           const detail = await this.call(`/facebook/post?url=${encodeURIComponent(v.originalUrl)}`);
+          budget -= 1;
           const item = this.itemsOf(detail.json)[0];
           const n = item ? this.normalize(item) : null;
           attempts.push({
@@ -407,10 +440,8 @@ export class SocialCrawlProvider implements SocialPlatformProvider {
     // store. A per-video failure preserves last-known-good (we just skip it).
     const commentsByVideo: Record<string, NormalizedComment[]> = {};
     if (wantComments) {
-      // In-run credit budget: never exceed what the caller allots (keeps a
-      // single comment cycle from overshooting the SocialCrawl daily cap).
-      let budget = opts.commentBudget ?? Infinity;
-      for (const v of videos) {
+      // Reuses the shared `budget` (already debited by the FB detail tier above).
+      for (const v of commentTargets) {
         if (budget <= 0) {
           attempts.push({
             provider: "socialcrawl",

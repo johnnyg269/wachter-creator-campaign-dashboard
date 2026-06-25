@@ -135,6 +135,55 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
     return this.fetchVideosByIds(ids);
   }
 
+  /**
+   * Enumerate uploads published on/after `since`, paging the uploads playlist
+   * (50/page, newest-first) up to `maxPages`, stopping once an older item is
+   * reached. Free YouTube Data API quota (no SocialCrawl credits). Used by the
+   * Bootcamp import dry run to auto-discover YouTube Shorts from the start date
+   * forward — the one platform whose back-catalog IS enumerable.
+   */
+  async listRecentUploads(
+    profile: PlatformProfile,
+    since: Date,
+    maxPages = 6,
+  ): Promise<NormalizedVideo[]> {
+    const uploads = await this.resolveUploadsPlaylist(profile);
+    if (!uploads) return [];
+    const ids: string[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < Math.max(1, maxPages); page++) {
+      const params: Record<string, string> = {
+        part: "contentDetails",
+        playlistId: uploads,
+        maxResults: "50",
+      };
+      if (pageToken) params.pageToken = pageToken;
+      const data = await this.yt("playlistItems", params);
+      const items = (data.items ?? []) as Array<{
+        contentDetails?: { videoId?: string; videoPublishedAt?: string };
+      }>;
+      let reachedOlder = false;
+      for (const it of items) {
+        const at = it.contentDetails?.videoPublishedAt;
+        const vid = it.contentDetails?.videoId;
+        if (!vid) continue;
+        if (at && new Date(at) < since) {
+          reachedOlder = true;
+          continue;
+        }
+        ids.push(vid);
+      }
+      pageToken = (data.nextPageToken as string | undefined) ?? undefined;
+      if (reachedOlder || !pageToken) break;
+    }
+    // Fetch full metadata in chunks of 50.
+    const out: NormalizedVideo[] = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      out.push(...(await this.fetchVideosByIds(ids.slice(i, i + 50))));
+    }
+    return out;
+  }
+
   async getVideoMetadata(url: string): Promise<NormalizedVideo | null> {
     const id = parseVideoUrl(url)?.externalVideoId;
     if (!id) return null;

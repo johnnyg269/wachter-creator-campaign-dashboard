@@ -9,7 +9,7 @@
 // below quarantine those records by rule alone — no schema migration, no
 // destructive delete, fully reversible by adjusting CAMPAIGN_START_DATE_ET.
 
-import { getCampaignStartDateEt } from "./config";
+import { getBootcampStartDateEt, getCampaignStartDateEt } from "./config";
 import type { Platform, Video } from "./types";
 
 /** Platforms this campaign tracks. */
@@ -61,6 +61,23 @@ export function campaignStartMs(): number {
 /** ISO of the campaign-start floor (for display/audit). */
 export function campaignStartISO(): string {
   return new Date(campaignStartMs()).toISOString();
+}
+
+/** Bootcamp-campaign start floor (ms) — earlier than the MTL floor. */
+export function bootcampStartMs(): number {
+  const ms = etMidnightMs(getBootcampStartDateEt());
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+/**
+ * Eligibility floor for a video given its CAMPAIGN assignment. Bootcamp-tagged
+ * content is eligible back to the (earlier) Bootcamp start; everything else
+ * (MTL, untagged-default-MTL, unassigned) uses the MTL start, so pre-MTL
+ * profile-feed items never silently count as MTL. Pass the resolved campaign
+ * slug (videoCampaign(v)) — null/"mtl" → MTL floor, "bootcamp" → Bootcamp floor.
+ */
+export function eligibilityFloorForCampaign(campaign: "mtl" | "bootcamp" | null): number {
+  return campaign === "bootcamp" ? bootcampStartMs() : campaignStartMs();
 }
 
 // Accepts both a stored Video and a freshly-normalized item (whose originalUrl

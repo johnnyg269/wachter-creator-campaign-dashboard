@@ -23,11 +23,19 @@ import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./
 import {
   campaignStartMs,
   classifyDiscoveryCandidate,
+  eligibilityFloorForCampaign,
   isCampaignEligible,
   isReviewCandidate,
   UNASSIGNED_EPISODE_NAME,
 } from "./eligibility";
-import { isAdminExcluded } from "./campaigns";
+import { isAdminExcluded, videoCampaign } from "./campaigns";
+import {
+  commentEligibleForTier,
+  getRefreshTierConfig,
+  isRefreshDue,
+  tierRefreshPriority,
+  videoRefreshTier,
+} from "./refresh-tiers";
 import { applyMonotonicViews, engagementRate } from "./metrics";
 import { initialThumbState, mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
 import { isTikTokCdnHost } from "./thumb-proxy";
@@ -68,6 +76,12 @@ export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
 /** SocialCrawl credits held back from the per-cycle comment budget so the
  *  metrics sweep + FB detail in the SAME run never tip over the daily cap. */
 const COMMENT_CREDIT_RESERVE = 20;
+/** SocialCrawl credits held back from the per-post DUE lane (Option B): leaves
+ *  headroom under the daily cap for the next tick's sweep + the comment cycle. */
+const PERPOST_CREDIT_RESERVE = 30;
+/** Max per-post DUE fetches per platform per cycle — spreads the Bootcamp daily
+ *  batch over several ticks and bounds run time well under maxDuration. */
+const MAX_PERPOST_PER_CYCLE = 15;
 /** Normal manual refreshes are pointless sooner than this after a success. */
 export const MANUAL_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
 /**
@@ -318,8 +332,13 @@ async function doRefresh(
   };
 
   const apifyAllowed = await apifyAllowedNow(store);
+  // Option B cadence gating applies to SCHEDULED (cron) runs only. Manual /
+  // force / script refreshes snapshot every matched video immediately (the
+  // profile sweep is free) — the per-post DUE lane still respects the tier
+  // cadence + credit cap on every trigger so a manual click can't overspend.
+  const respectTiers = trigger === "cron";
   for (const platform of PLATFORMS) {
-    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode, apifyAllowed);
+    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode, apifyAllowed, respectTiers);
     report.platforms.push(platformReport);
     if (platformReport.status === "failed" && platformReport.reason) {
       report.errors.push(`${platform}: ${platformReport.reason}`);
@@ -398,6 +417,7 @@ async function refreshPlatform(
   refreshRunId: string,
   mode: RunMode = { light: false, discovery: true, comments: true },
   apifyAllowed = false,
+  respectTiers = false,
 ): Promise<RefreshReport["platforms"][number]> {
   const out: RefreshReport["platforms"][number] = {
     platform,
@@ -422,7 +442,9 @@ async function refreshPlatform(
   const unassignedId = episodeGroups.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
   const videos = (await store.listVideos({ platform, includeHidden: true }))
     .filter((v) => !v.hidden)
-    .filter((v) => isCampaignEligible(v, startMs, unassignedId));
+    // Campaign-aware floor: Bootcamp-tagged videos are eligible back to the
+    // Bootcamp start (April), so they refresh; MTL/untagged use the MTL floor.
+    .filter((v) => isCampaignEligible(v, eligibilityFloorForCampaign(videoCampaign(v)), unassignedId));
 
   if (!readiness.ready) {
     out.status = "skipped";
@@ -504,9 +526,21 @@ async function refreshPlatform(
         ).credits;
         commentBudget = Math.max(0, rcfg.socialcrawlDailyCreditCap - usedToday - COMMENT_CREDIT_RESERVE);
       }
+      // Option B (Part 10): comment/detail (text + per-post engagement) pulls are
+      // limited to the hot-MTL subset — Bootcamp + cold/warm are off by default
+      // (config-gated). Removed videos are never in targetVideos. Metrics for the
+      // rest still come from the cheap profile sweep.
+      const tierCfg = getRefreshTierConfig();
+      const nowForComments = new Date();
+      const commentTargets = mode.comments
+        ? targetVideos.filter((v) =>
+            commentEligibleForTier(videoRefreshTier(v, nowForComments, tierCfg), tierCfg),
+          )
+        : [];
       fetched = await provider.fetchPlatform(targetProfile, targetVideos, since, {
         wantComments: mode.comments,
         commentBudget,
+        commentTargets,
       });
     } else {
       // Per-video fallback path for providers without a batch implementation.
@@ -600,6 +634,9 @@ async function refreshPlatform(
     const disc = { added: 0, review: 0, ignored: 0, healed: 0, reasons: {} as Record<string, number> };
     const seenNew = new Set<string>();
     const groups = new Map<string, { merged: NormalizedVideo; commentKeys: Set<string> }>();
+    // Videos created or healed THIS cycle always get a snapshot, bypassing the
+    // tier cadence gate (a brand-new record must record its first data point).
+    const forcedIds = new Set<string>();
     const addToGroup = (gkey: string, n: NormalizedVideo) => {
       const commentKey = n.externalVideoId ?? n.originalUrl ?? "";
       const group = groups.get(gkey);
@@ -646,11 +683,13 @@ async function refreshPlatform(
                   { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
                   { startMs, lookbackMs, now: nowMs },
                 ).decision === "add"
-              : // any other excluded record heals on a valid eligible provider date (>= start)
-                isCampaignEligible(nInput, startMs, null);
+              : // any other excluded record heals on a valid eligible provider date
+                // (campaign-aware floor: a Bootcamp-tagged record heals back to April)
+                isCampaignEligible(nInput, eligibilityFloorForCampaign(videoCampaign(existing)), null);
           if (canHeal) {
             await healExistingVideo(store, existing, n);
             disc.healed++;
+            forcedIds.add(existing.id);
             addToGroup(`v:${existing.id}`, n);
           } else {
             unmatchedIgnored++;
@@ -678,6 +717,7 @@ async function refreshPlatform(
         disc.added++;
         out.newVideosDiscovered++;
         await emitNewVideoAlert(store, campaign, created);
+        forcedIds.add(created.id);
         addToGroup(`v:${created.id}`, n); // snapshot now so it counts immediately
       } else {
         // review: persisted hidden + flagged → never counted until an admin promotes it.
@@ -716,39 +756,36 @@ async function refreshPlatform(
       return out;
     }
 
-    for (const { merged: n } of groups.values()) {
-      const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, n, out, mode.discovery);
-      if (!video) continue;
-
-      // Public view counts are monotonic — a LOWER reading than the last
-      // confirmed value is a stale/cached source response, not real decline.
-      // Record it as not-reported (null) so the display layer keeps the last
-      // confirmed value, and log the rejected reading for the audit trail.
-      const prev = (await store.listSnapshots(video.id))
-        .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
-        .find((s) => s.views !== null);
-      const { views, rejectedLower } = applyMonotonicViews(n.views, prev?.views ?? null);
-      if (rejectedLower !== null) {
-        log.push(
-          `${platform}: rejected lower view count ${rejectedLower} < ${prev?.views} for ${
-            video.externalVideoId ?? video.id
-          } (source fluctuation — keeping last confirmed)`,
-        );
+    // Snapshot each matched video — but on a SCHEDULED (cron) run, only when DUE
+    // per its Option B tier (hot MTL every 15m, warm MTL every 30m, Bootcamp
+    // daily). Not-due videos carry their last-known-good forward (no snapshot,
+    // no timestamp bump → no artificial chart dip). Freshly created/healed
+    // records always snapshot. Manual/force runs (respectTiers=false) snapshot
+    // everything — the profile sweep is already free.
+    const tierCfgSnap = getRefreshTierConfig();
+    const snapNow = new Date();
+    let deferredNotDue = 0;
+    for (const [gkey, grp] of groups) {
+      const id = gkey.startsWith("v:") ? gkey.slice(2) : null;
+      const before = id ? await store.getVideo(id) : null;
+      let due = (id !== null && forcedIds.has(id)) || !respectTiers || before === null;
+      if (!due && before) {
+        const tier = videoRefreshTier(before, snapNow, tierCfgSnap);
+        due = tier !== "none" && isRefreshDue({ tier, lastRefreshedAt: before.lastRefreshedAt }, snapNow, tierCfgSnap);
       }
-
-      await store.addSnapshot({
-        videoId: video.id,
-        capturedAt,
-        views,
-        likes: n.likes,
-        comments: n.comments,
-        shares: n.shares,
-        saves: n.saves,
-        bookmarks: n.bookmarks,
-        engagementRate: engagementRate({ ...n, views }),
-        rawJson: null, // raw payload already stored on the video
-      });
+      if (!due) {
+        deferredNotDue++;
+        continue;
+      }
+      const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, grp.merged, out, mode.discovery);
+      if (!video) continue;
+      await writeMetricsSnapshot(store, video, grp.merged, capturedAt, log, platform);
       out.videosUpdated++;
+    }
+    if (deferredNotDue > 0) {
+      log.push(
+        `${platform}: ${deferredNotDue} matched video(s) not due this tier cycle — carried last-known-good forward`,
+      );
     }
 
     // Tracked videos absent from this cycle's provider response keep their
@@ -764,6 +801,92 @@ async function refreshPlatform(
       log.push(
         `${platform}: ${missingFromProvider.length} tracked video(s) not in this cycle's response — kept last-known-good (carried forward)`,
       );
+    }
+
+    // ── Option B per-post DUE lane ───────────────────────────────────────────
+    // Refresh tracked videos the cheap profile sweep did NOT return (older than
+    // the ~10-item window) — but ONLY when DUE per their tier and WITHIN the
+    // SocialCrawl daily credit cap. This is where the Bootcamp daily batch + warm
+    // MTL beyond the window actually spend credits. Priority: warm MTL before the
+    // Bootcamp batch. Excluded videos are already absent from `videos` (and tier
+    // "none" is filtered) so they never spend a credit. YouTube fetches by id for
+    // free (no credit gate). Whatever doesn't fit the cap/cycle carries to the
+    // next run — lastRefreshedAt only advances for videos actually fetched.
+    const perPostProcessedIds = new Set<string>();
+    if (!mode.light && provider.getVideoMetadata && missingFromProvider.length > 0) {
+      const cfgTier = getRefreshTierConfig();
+      const nowPP = new Date();
+      const isSc = provider.providerType === "socialcrawl";
+      const due = missingFromProvider
+        .map((v) => ({ v, tier: videoRefreshTier(v, nowPP, cfgTier) }))
+        .filter((x) => x.tier !== "none")
+        .filter((x) => isRefreshDue({ tier: x.tier, lastRefreshedAt: x.v.lastRefreshedAt }, nowPP, cfgTier))
+        .sort(
+          (a, b) =>
+            tierRefreshPriority(a.tier) - tierRefreshPriority(b.tier) ||
+            (a.v.lastRefreshedAt ?? "").localeCompare(b.v.lastRefreshedAt ?? ""),
+        );
+      let headroom = Infinity;
+      if (isSc) {
+        const rcfg = getRefreshPolicyConfig();
+        const usedToday = socialcrawlCreditsToday(
+          await store.listCollectionAttempts(1000),
+          nowPP,
+          rcfg.quietTimezone,
+        ).credits;
+        headroom = Math.max(0, rcfg.socialcrawlDailyCreditCap - usedToday - PERPOST_CREDIT_RESERVE);
+      }
+      const limit = Math.min(due.length, MAX_PERPOST_PER_CYCLE, isSc ? headroom : Infinity);
+      let processed = 0;
+      for (const { v, tier } of due) {
+        if (processed >= limit) break;
+        const at = new Date().toISOString();
+        let detail: NormalizedVideo | null = null;
+        try {
+          detail = await provider.getVideoMetadata(v.originalUrl);
+        } catch {
+          detail = null;
+        }
+        if (detail) {
+          const video = await upsertFetchedVideo(store, campaign, platform, profile?.id ?? null, detail, out, false);
+          if (video) {
+            await writeMetricsSnapshot(store, video, detail, capturedAt, log, platform);
+            out.videosUpdated++;
+          } else {
+            await store.updateVideo(v.id, { lastRefreshedAt: at });
+          }
+        } else {
+          // Miss (deleted/private/no item): advance the timestamp so we don't
+          // re-spend a credit on this video until its next tier interval.
+          await store.updateVideo(v.id, { lastRefreshedAt: at });
+        }
+        perPostProcessedIds.add(v.id);
+        if (isSc) {
+          await store.addCollectionAttempt({
+            refreshRunId,
+            platform,
+            provider: "socialcrawl",
+            actorId: null,
+            kind: "metrics",
+            inputDescription: `socialcrawl ${platform} due-refresh ${tier} · 1cr · cache:miss${detail ? "" : " · no item"}`,
+            success: Boolean(detail),
+            runId: null,
+            itemCount: detail ? 1 : 0,
+            error: detail ? null : "no item in detail response",
+            capturedAt: at,
+          });
+        }
+        processed++;
+      }
+      const remaining = due.length - processed;
+      if (processed > 0 || remaining > 0) {
+        log.push(
+          `${platform}: per-post due refresh — ${processed} updated` +
+            (remaining > 0
+              ? `, ${remaining} carried to next cycle (${isSc ? `credit headroom ${Math.round(headroom)}` : "per-cycle limit"})`
+              : ""),
+        );
+      }
     }
 
     // Facebook thumbnail repair: the profile reels endpoint lists only the most
@@ -782,6 +905,7 @@ async function refreshPlatform(
     ) {
       const MAX_FB_THUMB_REPAIR_PER_CYCLE = 5;
       const needRepair = missingFromProvider
+        .filter((v) => !perPostProcessedIds.has(v.id)) // per-post lane already refreshed (incl. thumbnail)
         .filter((v) => !v.thumbnailUrl)
         .filter((v) => readThumbState(v.rawJson).status !== "failed")
         .slice(0, MAX_FB_THUMB_REPAIR_PER_CYCLE);
@@ -896,6 +1020,45 @@ async function refreshPlatform(
   }
 
   return out;
+}
+
+/**
+ * Write one metrics snapshot for a video, applying monotonic-view protection (a
+ * lower-than-last-confirmed reading is recorded as null so the display keeps the
+ * last confirmed value). Shared by the profile-sweep loop and the per-post DUE
+ * lane. The raw payload is already stored on the video, so snapshots carry none.
+ */
+async function writeMetricsSnapshot(
+  store: Store,
+  video: Video,
+  n: NormalizedVideo,
+  capturedAt: string,
+  log: string[],
+  platform: Platform,
+): Promise<void> {
+  const prev = (await store.listSnapshots(video.id))
+    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+    .find((s) => s.views !== null);
+  const { views, rejectedLower } = applyMonotonicViews(n.views, prev?.views ?? null);
+  if (rejectedLower !== null) {
+    log.push(
+      `${platform}: rejected lower view count ${rejectedLower} < ${prev?.views} for ${
+        video.externalVideoId ?? video.id
+      } (source fluctuation — keeping last confirmed)`,
+    );
+  }
+  await store.addSnapshot({
+    videoId: video.id,
+    capturedAt,
+    views,
+    likes: n.likes,
+    comments: n.comments,
+    shares: n.shares,
+    saves: n.saves,
+    bookmarks: n.bookmarks,
+    engagementRate: engagementRate({ ...n, views }),
+    rawJson: null,
+  });
 }
 
 /**

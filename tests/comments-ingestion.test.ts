@@ -156,3 +156,53 @@ describe("comment ingestion safety + UI coverage", () => {
     expect(read("src/app/admin/page.tsx")).toMatch(/Comment ingestion/);
   });
 });
+
+// ── Phase 2A regression: the FB per-post detail tier shares the credit budget ──
+describe("FB detail tier is bounded by the shared comment credit budget (no cap overshoot)", () => {
+  it("stops FB /post detail + comment calls once the budget is exhausted", async () => {
+    const calls = { profile: 0, detail: 0, comments: 0 };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = String(url);
+        let body: unknown = { success: true, data: {} };
+        if (u.includes("/facebook/profile/reels")) {
+          calls.profile++;
+          body = { success: true, data: { items: [] }, credits_used: 1, cached: false };
+        } else if (u.includes("/facebook/post/comments")) {
+          calls.comments++;
+          body = commentsEnvelope([
+            { id: "c", text: "hi", author: { username: "u" }, flags: { deleted: false }, published_at: "2026-06-18T00:00:00.000Z" },
+          ]);
+        } else if (u.includes("/facebook/post")) {
+          calls.detail++;
+          body = {
+            success: true,
+            data: { items: [{ post: { id: "x", url: "https://www.facebook.com/reel/x", engagement: { views: 100, likes: 1, comments: 2, shares: 3 } } }] },
+            credits_used: 1,
+            cached: false,
+          };
+        }
+        return { ok: true, status: 200, json: async () => body } as unknown as Response;
+      }),
+    );
+    const profile = {
+      id: "p1", campaignId: "c1", platform: "facebook" as const,
+      profileUrl: "https://www.facebook.com/x", handle: "x", externalProfileId: null,
+      lastDiscoveredAt: null, status: "live" as const,
+    };
+    const targets = [1, 2, 3].map((n) =>
+      vid("facebook", { id: `fb${n}`, originalUrl: `https://www.facebook.com/reel/${n}`, externalVideoId: String(n) }),
+    );
+    const out = await new SocialCrawlProvider("facebook").fetchPlatform!(profile, targets, new Date(), {
+      wantComments: true,
+      commentBudget: 1, // only ONE credit of headroom
+      commentTargets: targets,
+    });
+    // Budget 1 → exactly one FB detail call, then the detail loop breaks and the
+    // comment-text loop never runs — total spend can't exceed the allotment.
+    expect(calls.detail).toBe(1);
+    expect(calls.comments).toBe(0);
+    expect(out.attempts.some((a) => /skipped \(credit budget reached\)/.test(a.inputDescription))).toBe(true);
+  });
+});

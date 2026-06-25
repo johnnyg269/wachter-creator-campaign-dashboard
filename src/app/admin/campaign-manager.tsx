@@ -8,6 +8,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CampaignSlug, TrackingStatus } from "@/lib/campaigns";
+import { TIER_LABELS, type RefreshTier } from "@/lib/refresh-tiers";
 import type { Platform } from "@/lib/types";
 
 export interface CampaignManagerVideo {
@@ -17,6 +18,19 @@ export interface CampaignManagerVideo {
   urlSlug: string;
   campaign: CampaignSlug | null;
   trackingStatus: TrackingStatus;
+  tier: RefreshTier;
+  lastRefreshedAt: string | null;
+}
+
+function relativeAge(iso: string | null): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 const CAMPAIGN_OPTIONS: Array<{ value: "mtl" | "bootcamp" | "unassigned"; label: string }> = [
@@ -152,6 +166,7 @@ export function CampaignManager({ videos }: { videos: CampaignManagerVideo[] }) 
               <th className="py-1.5 pr-3 font-medium">Video</th>
               <th className="py-1.5 pr-3 font-medium">Platform</th>
               <th className="py-1.5 pr-3 font-medium">Campaign</th>
+              <th className="py-1.5 pr-3 font-medium">Refresh tier</th>
               <th className="py-1.5 pr-3 font-medium">Tracking</th>
             </tr>
           </thead>
@@ -183,6 +198,14 @@ export function CampaignManager({ videos }: { videos: CampaignManagerVideo[] }) 
                   )}
                 </td>
                 <td className="py-2 pr-3">
+                  <div className={v.tier === "none" ? "text-muted-strong" : v.tier === "mtl_hot" ? "text-accent" : "text-foreground"}>
+                    {TIER_LABELS[v.tier]}
+                  </div>
+                  <div className="text-[10px] text-muted-strong">
+                    {v.tier === "none" ? "removed — never refreshed" : `last ${relativeAge(v.lastRefreshedAt)}`}
+                  </div>
+                </td>
+                <td className="py-2 pr-3">
                   {v.trackingStatus === "excluded" ? (
                     <button type="button" disabled={busy} onClick={() => trackOne(v.id, "restore")} className="rounded border border-positive/50 px-2 py-0.5 text-positive hover:bg-surface-hover disabled:opacity-50">Restore</button>
                   ) : (
@@ -192,7 +215,7 @@ export function CampaignManager({ videos }: { videos: CampaignManagerVideo[] }) 
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={5} className="py-3 text-muted">{showExcluded ? "No excluded videos." : "No active videos."}</td></tr>
+              <tr><td colSpan={6} className="py-3 text-muted">{showExcluded ? "No excluded videos." : "No active videos."}</td></tr>
             )}
           </tbody>
         </table>

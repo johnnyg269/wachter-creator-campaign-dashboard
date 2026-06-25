@@ -9,12 +9,13 @@ import { resolveProvider } from "@/lib/providers/registry";
 import { parseVideoUrl, tiktokPublishedAtFromId } from "@/lib/url-parse";
 import type { Video } from "@/lib/types";
 import {
-  campaignStartMs,
+  eligibilityFloorForCampaign,
   ineligibilityReason,
   isCampaignEligible,
   isReviewCandidate,
   UNASSIGNED_EPISODE_NAME,
 } from "@/lib/eligibility";
+import { campaignTag } from "@/lib/campaigns";
 import {
   asTrimmedString,
   badRequest,
@@ -52,7 +53,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       parsed.externalVideoId,
     );
     if (existing) {
-      const startMs = campaignStartMs();
+      // Campaign-aware floor: an excluded Bootcamp record is eligible back to the
+      // April Bootcamp start (campaignTag ignores exclusion), matching the
+      // chokepoint / refresh / quarantine — so a valid Bootcamp video can be
+      // restored instead of being wrongly told it's pre-campaign.
+      const startMs = eligibilityFloorForCampaign(campaignTag(existing));
       const eps = await store.listEpisodeGroups();
       const unassignedId = eps.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
       const review = isReviewCandidate(existing);

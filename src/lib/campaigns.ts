@@ -69,6 +69,20 @@ export function videoCampaign(v: RawWithTags): CampaignSlug | null {
   return "mtl"; // migration default for untagged, non-excluded videos
 }
 
+/**
+ * Raw campaign tag IGNORING exclusion — for eligibility-floor decisions on the
+ * restore path. Unlike videoCampaign (where exclusion dominates → null), an
+ * excluded Bootcamp record still reports "bootcamp" here, so the manual-add
+ * restore flow uses the April Bootcamp floor (not the June MTL floor) when an
+ * admin restores it. Untagged → "mtl" (migration default); "unassigned" → null.
+ */
+export function campaignTag(v: RawWithTags): CampaignSlug | null {
+  const tag = rawObj(v).campaign;
+  if (tag === "mtl" || tag === "bootcamp") return tag;
+  if (tag === "unassigned") return null;
+  return "mtl";
+}
+
 export function videoTrackingStatus(v: RawWithTags): TrackingStatus {
   if (isAdminExcluded(v)) return "excluded";
   if (isReviewCandidate(v)) return "review";

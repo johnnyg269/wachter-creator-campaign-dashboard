@@ -23,12 +23,18 @@ import { DiscoveryControls } from "./discovery-controls";
 import { ThumbnailRepairButton } from "./thumbnail-repair-button";
 import { CampaignManager } from "./campaign-manager";
 import { ReviewCandidates } from "./review-candidates";
+import { CreditPanel } from "./credit-panel";
+import { BootcampImport } from "./bootcamp-import";
+import { getBootcampImportDefaults } from "@/lib/bootcamp-import";
+import { refreshTierFor } from "@/lib/refresh-tiers";
 
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
   { id: "readiness", label: "Production Readiness" },
   { id: "automation", label: "Refresh Health" },
+  { id: "credits", label: "Credits & Tiers" },
+  { id: "bootcamp", label: "Bootcamp Import" },
   { id: "discovery", label: "Discovery" },
   { id: "providers", label: "Metrics Providers" },
   { id: "youtube", label: "YouTube Provider" },
@@ -230,6 +236,22 @@ export default async function AdminPage() {
           <RefreshHealthPanel runs={data.refreshRuns} />
         </section>
 
+        <section id="credits">
+          <CreditPanel credits={data.credits} tiers={data.tierSplit} />
+        </section>
+
+        <section id="bootcamp">
+          <Card>
+            <CardHeader
+              title="Bootcamp import"
+              subtitle="Configure the import window per platform and run a credit-safe dry run (no writes). Approve & write lands in Phase 2B."
+            />
+            <CardBody>
+              <BootcampImport defaults={getBootcampImportDefaults()} />
+            </CardBody>
+          </Card>
+        </section>
+
         <section id="discovery">
           <Card>
             <CardHeader
@@ -353,6 +375,16 @@ export default async function AdminPage() {
                   })(),
                   campaign: v.campaign,
                   trackingStatus: v.trackingStatus,
+                  tier: refreshTierFor(
+                    {
+                      campaign: v.campaign,
+                      excluded: v.trackingStatus === "excluded",
+                      publishedAt: v.publishedAt,
+                      firstTrackedAt: v.firstTrackedAt,
+                    },
+                    new Date(),
+                  ),
+                  lastRefreshedAt: v.lastRefreshedAt,
                 }))}
               />
             </CardBody>

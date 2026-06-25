@@ -77,7 +77,7 @@ import {
 import { readThumbState } from "./thumbnail-state";
 import { resolveViews } from "./apify/view-resolver";
 import {
-  campaignStartMs,
+  eligibilityFloorForCampaign,
   ineligibilityReason,
   isCampaignEligible,
   isReviewCandidate,
@@ -93,6 +93,7 @@ import {
   type CampaignSlug,
   type TrackingStatus,
 } from "./campaigns";
+import { summarizeCredits, tierSplit, type CreditSummary, type TierSplit } from "./credit-policy";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -231,7 +232,6 @@ export async function loadCampaignData(
   const campaign = await ensureSeedData(store);
   const episodes = await store.listEpisodeGroups();
   const unassignedId = episodes.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
-  const startMs = campaignStartMs();
   // Strip raw actor payloads before anything page-facing: client-component
   // props serialize into the public page payload, and rawJson contains
   // internal collector URLs (signed dataset links) and vendor field names.
@@ -244,7 +244,13 @@ export async function loadCampaignData(
   const videos = (await store.listVideos({ includeHidden }))
     // Eligible AND not a pending discovery-review candidate (those stay out of
     // every public total until an admin promotes them from "Possible new content").
-    .filter((v) => isCampaignEligible(v, startMs, unassignedId) && !isReviewCandidate(v))
+    // Campaign-aware floor: Bootcamp-tagged content is eligible back to the
+    // Bootcamp start (April), MTL/untagged uses the later MTL start.
+    .filter(
+      (v) =>
+        isCampaignEligible(v, eligibilityFloorForCampaign(videoCampaign(v)), unassignedId) &&
+        !isReviewCandidate(v),
+    )
     .map((v) => ({
       ...v,
       // Resolve campaign + tracking BEFORE stripping rawJson — these derived
@@ -1062,6 +1068,10 @@ export interface AdminPageData {
   thumbnailIssues: ThumbnailIssue[];
   /** SocialCrawl provider status + credit usage (admin-only, never the key). */
   socialcrawl: SocialcrawlAdminStatus;
+  /** Option B credit policy: usage / projection / days-remaining (admin-only). */
+  credits: CreditSummary;
+  /** Hot / Warm / Bootcamp / excluded refresh-tier split + Bootcamp batch cost. */
+  tierSplit: TierSplit;
   /** Per-platform comment ingestion health (admin-only). */
   commentHealth: CommentHealthRow[];
   /** YouTube provider health — API vs Apify fallback (never the key value). */
@@ -1309,11 +1319,11 @@ export async function getAdminPageData(): Promise<AdminPageData> {
   // feed imports with epoch dates). Read raw store rows so we can surface the
   // provider source + raw timestamp (loadCampaignData filters these out and
   // strips rawJson). Hidden records are dropped — admin "Hide" clears the queue.
-  const startMsAdmin = campaignStartMs();
   const unassignedIdAdmin = data.episodes.find((e) => e.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
   const quarantinedVideos: QuarantinedVideoDiag[] = (await store.listVideos({ includeHidden: true }))
     .filter((v) => !v.hidden)
-    .map((v) => ({ v, reason: ineligibilityReason(v, startMsAdmin, unassignedIdAdmin) }))
+    // Campaign-aware floor: a Bootcamp-tagged April video is eligible (not quarantined).
+    .map((v) => ({ v, reason: ineligibilityReason(v, eligibilityFloorForCampaign(videoCampaign(v)), unassignedIdAdmin) }))
     .filter((x): x is { v: Video; reason: IneligibilityReason } => x.reason !== null)
     .map(({ v, reason }) => {
       const rawPost =
@@ -1480,6 +1490,31 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     facebookViewSource: fbProvider === "socialcrawl" ? "socialcrawl_public_plays" : "apify_viewscount",
   };
 
+  // Option B credit policy + tier split (admin-only). A wider attempt window is
+  // needed for the recent-daily-average + credits-remaining than the 200-row
+  // display list above (a single active day is already ~270 attempts).
+  const scPolicy = getRefreshPolicyConfig();
+  const creditAttempts = await store.listCollectionAttempts(4000);
+  const credits = summarizeCredits({
+    attempts: creditAttempts,
+    now: new Date(),
+    tz: scTz,
+    cap: getSocialcrawlDailyCreditCap(),
+    activeStartHour: scPolicy.quietStartHour,
+    activeEndHour: scPolicy.quietEndHour,
+  });
+  const tierSplitData = tierSplit(
+    data.videos.map((v) => ({
+      platform: v.platform,
+      campaign: v.campaign,
+      excluded: v.trackingStatus === "excluded",
+      publishedAt: v.publishedAt,
+      firstTrackedAt: v.firstTrackedAt,
+      lastRefreshedAt: v.lastRefreshedAt,
+    })),
+    new Date(),
+  );
+
   // Comment ingestion health (admin-only). Text source: SocialCrawl for TT/IG/FB
   // (/{platform}/post/comments), YouTube Data API for YouTube. Counts come from
   // stored comments; pull status from the logged "comments" attempts (SocialCrawl).
@@ -1572,6 +1607,8 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     reviewCandidates,
     thumbnailIssues,
     socialcrawl,
+    credits,
+    tierSplit: tierSplitData,
     commentHealth,
     youtubeProvider,
     readiness: {

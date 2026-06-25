@@ -155,6 +155,19 @@ export function getCampaignStartDateEt(): string {
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "2026-06-08";
 }
 
+/**
+ * Bootcamp campaign start floor (ET, YYYY-MM-DD). The Bootcamp campaign began
+ * months before MTL (and still posts during it), so Bootcamp-tagged content is
+ * eligible back to THIS date — earlier than the MTL floor above. Defaults to
+ * 2026-04-11 (the first Bootcamp videos); override via BOOTCAMP_START_DATE.
+ * Untagged / MTL content still uses the later MTL floor (so pre-MTL profile-feed
+ * items never silently count as MTL).
+ */
+export function getBootcampStartDateEt(): string {
+  const raw = process.env.BOOTCAMP_START_DATE?.trim();
+  return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "2026-04-11";
+}
+
 // ---------------------------------------------------------------------------
 // Campaign seed data (URLs provided at campaign kickoff)
 // ---------------------------------------------------------------------------
