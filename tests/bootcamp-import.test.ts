@@ -155,6 +155,13 @@ describe("dry-run route logs anchor-resolution credits (so the cap can't be unde
     expect(src).toMatch(/isSocialcrawlPlatform\(platform\)/);
     expect(src).toMatch(/dry-run anchor · 1cr/);
   });
+  it("is admin-gated: admin session OR constant-time CRON_SECRET bearer, fail-closed", () => {
+    const src = readFileSync(path.join(process.cwd(), "src/app/api/admin/bootcamp-import/dry-run/route.ts"), "utf-8");
+    expect(src).toMatch(/checkAdminRequest\(req\) === null/);
+    expect(src).toMatch(/bearerMatches\(req\.headers\.get\("authorization"\), getCronSecret\(\)\)/);
+    expect(src).toMatch(/!getAdminPassword\(\) && !getCronSecret\(\)/); // fail-closed
+    expect(src).not.toMatch(/\?secret=/); // never a query-param secret
+  });
 });
 
 // ── Dry-run integration ──────────────────────────────────────────────────────
