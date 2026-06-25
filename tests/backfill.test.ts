@@ -176,6 +176,31 @@ describe("runBackfillDryRun — enumerate + classify + NEVER write", () => {
     expect(report.platforms.every((p) => p.stopReason === "max_calls" || p.stopReason === "not_configured")).toBe(true);
   });
 
+  it("runs ONE platform per call when scoped (avoids the Apify concurrency limit)", async () => {
+    const store = getStore();
+    await ensureSeedData(store);
+    let ttCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = String(url);
+        let body: unknown = [];
+        if (u.includes("/runs?desc")) body = { data: { items: [{ usageTotalUsd: 0.2 }] } };
+        else if (u.includes(`/acts/${TT_ACTOR}/run-sync-get-dataset-items`)) {
+          ttCalls++;
+          body = [ttItem("900", "2026-05-01T00:00:00.000Z", 4000)];
+        } else if (u.includes("run-sync-get-dataset-items")) {
+          throw new Error("no other platform should be called");
+        }
+        return { ok: true, status: 201, json: async () => body } as unknown as Response;
+      }),
+    );
+    const report = await runBackfillDryRun(store, CFG, { platforms: ["tiktok"] });
+    expect(report.platforms.map((p) => p.platform)).toEqual(["tiktok"]); // ONLY tiktok
+    expect(ttCalls).toBe(1);
+    expect(report.platforms[0].byClass.suggested_bootcamp).toBe(1);
+  });
+
   it("PRE-SPEND cost guard aborts before any provider call when the estimate exceeds the cap", async () => {
     const store = getStore();
     await ensureSeedData(store);

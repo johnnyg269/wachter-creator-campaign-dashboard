@@ -57,7 +57,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         config: { provider: cfg.provider, maxProviderCalls: cfg.maxProviderCalls, maxCostUsd: cfg.maxCostUsd, startDate: cfg.startDate },
       });
     }
-    const report = await runBackfillDryRun(getStore(), cfg);
+    // One platform per call (the admin UI fires them sequentially): the Apify
+    // account's low concurrency means parallel actor runs get cut short, so
+    // scope each call to a single platform that comfortably fits the timeout.
+    const VALID = ["tiktok", "instagram", "facebook", "youtube"] as const;
+    const rawPlatforms = Array.isArray(body.platforms)
+      ? body.platforms
+      : typeof body.platform === "string"
+        ? [body.platform]
+        : [];
+    const platforms = rawPlatforms.filter((p): p is (typeof VALID)[number] => VALID.includes(p as (typeof VALID)[number]));
+    const report = await runBackfillDryRun(getStore(), cfg, platforms.length ? { platforms } : {});
     return NextResponse.json({ ok: true, report });
   } catch (e) {
     return serverError(e, "Backfill dry run failed");

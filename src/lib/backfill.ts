@@ -223,12 +223,19 @@ async function enumerateApify(
 export async function runBackfillDryRun(
   store: Store,
   cfg: BackfillConfig,
-  deps: { now?: Date } = {},
+  deps: { now?: Date; platforms?: Platform[] } = {},
 ): Promise<BackfillDryRunReport> {
   const now = deps.now ?? new Date();
   const startMs = etMidnightMs(cfg.startDate);
   const mtlStartMs = campaignStartMs();
   const token = getApifyToken();
+  // The Apify account's low concurrency limit means running several actors at
+  // once causes queued runs to be cut short. Callers therefore run ONE platform
+  // per call (the admin UI fires them sequentially); `platforms` scopes this run.
+  const targetPlatforms =
+    deps.platforms && deps.platforms.length
+      ? BACKFILL_PLATFORMS.filter((p) => deps.platforms!.includes(p))
+      : [...BACKFILL_PLATFORMS];
 
   const lookupExisting = async (platform: Platform, canonicalUrl: string | null, externalVideoId: string | null) => {
     if (!canonicalUrl && !externalVideoId) return null;
@@ -376,11 +383,11 @@ export async function runBackfillDryRun(
   // cap actually preventive (not just advisory) despite the parallel fan-out.
   const allowedApifyRuns =
     cfg.provider === "apify"
-      ? BACKFILL_PLATFORMS.filter((p, i) => p !== "youtube" && i < cfg.maxProviderCalls).length
+      ? targetPlatforms.filter((p, i) => p !== "youtube" && i < cfg.maxProviderCalls).length
       : 0;
   if (cfg.maxCostUsd > 0 && allowedApifyRuns * ESTIMATED_APIFY_RUN_COST_USD > cfg.maxCostUsd) {
     const note = `Estimated worst-case cost ~$${(allowedApifyRuns * ESTIMATED_APIFY_RUN_COST_USD).toFixed(2)} (${allowedApifyRuns} Apify run(s)) exceeds the $${cfg.maxCostUsd} cap — aborted before any provider call. Raise BACKFILL_MAX_COST_USD or lower maxProviderCalls.`;
-    const platforms = BACKFILL_PLATFORMS.map((p) =>
+    const platforms = targetPlatforms.map((p) =>
       platformReport(
         p,
         p === "youtube" ? "youtube_api" : "apify",
@@ -412,7 +419,7 @@ export async function runBackfillDryRun(
   // pre-allocated by platform order so a low maxProviderCalls is enforced
   // race-free — platform i runs only if i < maxProviderCalls.
   const platforms = await Promise.all(
-    BACKFILL_PLATFORMS.map((p, i) => buildPlatform(p, i < cfg.maxProviderCalls)),
+    targetPlatforms.map((p, i) => buildPlatform(p, i < cfg.maxProviderCalls)),
   );
 
   const sum = (sel: (r: BackfillPlatformReport) => number) => platforms.reduce((s, r) => s + sel(r), 0);

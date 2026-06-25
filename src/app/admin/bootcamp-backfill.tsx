@@ -19,6 +19,38 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   youtube: "YouTube Shorts",
 };
 
+type Cls = keyof BackfillPlatformReport["byClass"];
+const IMPORTABLE_CLASSES: Cls[] = ["suggested_bootcamp", "overlap", "invalid_date"];
+
+/** Merge the per-platform reports collected so far into one report with
+ *  recomputed totals (the dry run runs one platform per request). */
+function mergeReports(platforms: BackfillPlatformReport[], last: BackfillDryRunReport): BackfillDryRunReport {
+  const cls = (c: Cls) => platforms.reduce((s, p) => s + (p.byClass[c] ?? 0), 0);
+  const costs = platforms.map((p) => p.estCostUsd).filter((c): c is number => c !== null);
+  return {
+    generatedAt: last.generatedAt,
+    enabled: last.enabled,
+    provider: last.provider,
+    startDate: last.startDate,
+    platforms,
+    totals: {
+      candidatesFound: platforms.reduce((s, p) => s + p.candidatesFound, 0),
+      importable: IMPORTABLE_CLASSES.reduce((s, c) => s + cls(c), 0),
+      suggestedBootcamp: cls("suggested_bootcamp") + cls("suggested_bootcamp_unresolved"),
+      overlap: cls("overlap"),
+      alreadyMtl: cls("already_mtl"),
+      alreadyBootcamp: cls("already_bootcamp"),
+      alreadyExcluded: cls("already_excluded"),
+      invalid: cls("invalid_url") + cls("invalid_date"),
+      providerCalls: platforms.filter((p) => p.ran).length,
+      estCostUsd: costs.length ? Math.round(costs.reduce((s, c) => s + c, 0) * 10000) / 10000 : null,
+    },
+    maxProviderCalls: last.maxProviderCalls,
+    maxCostUsd: last.maxCostUsd,
+    wroteRecords: false,
+  };
+}
+
 export function BootcampBackfill({
   defaults,
 }: {
@@ -30,30 +62,48 @@ export function BootcampBackfill({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [disabledMsg, setDisabledMsg] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [report, setReport] = useState<BackfillDryRunReport | null>(null);
 
+  // Run ONE platform per request, sequentially — the Apify account's low
+  // concurrency limit cuts parallel actor runs short. YouTube (free) first, then
+  // the three Apify platforms; results accumulate into one merged report.
   async function runDryRun() {
-    if (!window.confirm("Run the automatic backfill DRY RUN? This calls Apify for TikTok/Instagram/Facebook (one-time, cost-capped) and the YouTube API. It writes NO records.")) return;
+    if (!window.confirm("Run the automatic backfill DRY RUN? It enumerates each platform one at a time — YouTube (free) then TikTok / Instagram / Facebook via Apify (one-time, cost-capped). It writes NO records.")) return;
     setBusy(true);
     setError(null);
     setDisabledMsg(null);
     setReport(null);
+    setProgress(null);
+    const order: Platform[] = ["youtube", "tiktok", "instagram", "facebook"];
+    const collected: BackfillDryRunReport["platforms"] = [];
     try {
-      const res = await fetch("/api/admin/bootcamp-backfill/dry-run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: true, provider: "apify", startDate, maxProviderCalls: Number(maxCalls) || undefined, maxCostUsd: Number(maxCost) || undefined }),
-      });
-      const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; report?: BackfillDryRunReport; disabled?: boolean; message?: string }
-        | null;
-      if (data?.disabled) setDisabledMsg(data.message ?? "Backfill is disabled.");
-      else if (data?.ok && data.report) setReport(data.report);
-      else setError(data?.error ?? "Backfill dry run failed");
+      for (const p of order) {
+        setProgress(`Discovering ${PLATFORM_LABEL[p]}… (${collected.length}/${order.length} done)`);
+        const res = await fetch("/api/admin/bootcamp-backfill/dry-run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true, provider: "apify", platform: p, startDate, maxProviderCalls: Number(maxCalls) || undefined, maxCostUsd: Number(maxCost) || undefined }),
+        });
+        const data = (await res.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; report?: BackfillDryRunReport; disabled?: boolean; message?: string }
+          | null;
+        if (data?.disabled) {
+          setDisabledMsg(data.message ?? "Backfill is disabled.");
+          break;
+        }
+        if (data?.ok && data.report) {
+          collected.push(...data.report.platforms);
+          setReport(mergeReports(collected, data.report));
+        } else {
+          setError(`${PLATFORM_LABEL[p]}: ${data?.error ?? "failed"} (continuing)`);
+        }
+      }
     } catch {
-      setError("Request failed (the run can take 1–3 minutes for Facebook).");
+      setError("A request failed (a platform run can take up to ~3 minutes).");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -86,8 +136,9 @@ export function BootcampBackfill({
           onClick={runDryRun}
           className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
         >
-          {busy ? "Discovering… (up to ~3 min)" : "Run automatic backfill dry run"}
+          {busy ? "Discovering…" : "Run automatic backfill dry run"}
         </button>
+        {progress && <span className="text-muted">{progress}</span>}
         {error && <span className="text-negative">{error}</span>}
       </div>
       {disabledMsg && <div className="rounded-lg border border-warning/50 px-3 py-2 text-warning">{disabledMsg}</div>}
