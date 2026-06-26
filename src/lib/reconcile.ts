@@ -11,8 +11,22 @@ import { eligibilityFloorForCampaign, ineligibilityReason, isReviewCandidate, UN
 import { loadCampaignData } from "./queries";
 import { getStore } from "./store";
 import type { Store } from "./store/types";
+import type { Platform } from "./types";
 
 type Campaign = "bootcamp" | "mtl";
+
+const PLATFORMS: Platform[] = ["tiktok", "instagram", "facebook", "youtube"];
+const emptyByPlatform = (): Record<Platform, number> => ({ tiktok: 0, instagram: 0, facebook: 0, youtube: 0 });
+
+/** One non-active record, for explaining the total-vs-active gap (no PII / no rawJson). */
+export interface DroppedRecord {
+  tag: Campaign;
+  platform: Platform;
+  publishedAt: string | null;
+  hidden: boolean;
+  excluded: boolean;
+  reason: string;
+}
 
 export interface CampaignReconcile {
   campaign: Campaign;
@@ -30,6 +44,10 @@ export interface CampaignReconcile {
   droppedFromActive: number;
   /** Why each non-active record is excluded from the active count (sums to droppedFromActive). */
   dropReasons: Record<string, number>;
+  /** Active public videos per platform (sums to activePublicCount). */
+  activeByPlatform: Record<Platform, number>;
+  /** All tagged records per platform (sums to totalRecords). */
+  recordsByPlatform: Record<Platform, number>;
 }
 
 export interface ReconcileResult {
@@ -46,6 +64,8 @@ export interface ReconcileResult {
   excludedGlobalCount: number;
   /** Newest snapshot timestamp across the active set, or null. */
   lastUpdated: string | null;
+  /** Every bootcamp/mtl-tagged record NOT in the active set, with its drop reason. */
+  droppedRecords: DroppedRecord[];
   invariants: {
     /** all views === bootcamp views + mtl views. */
     allViewsEqualsBootcampPlusMtl: boolean;
@@ -91,15 +111,21 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
 
   const activeIds = { bootcamp: new Set(bootcampData.videos.map((v) => v.id)), mtl: new Set(mtlData.videos.map((v) => v.id)) };
 
+  const droppedRecords: DroppedRecord[] = [];
+
   const perCampaign = (campaign: Campaign): CampaignReconcile => {
     const data = campaign === "bootcamp" ? bootcampData : mtlData;
     const activePublicCount = data.videos.length;
     const viewVals = data.videos.map((v) => data.metricsByVideo.get(v.id)?.confirmed.views?.value ?? null);
     const activeTotalViews = sumViews(viewVals);
     const activeMissingMetricsCount = viewVals.filter((v) => v === null).length;
+    const activeByPlatform = emptyByPlatform();
+    for (const v of data.videos) if (PLATFORMS.includes(v.platform)) activeByPlatform[v.platform] += 1;
 
     const tagged = allRecords.filter((v) => campaignTag(v) === campaign);
     const excludedCount = tagged.filter((v) => isAdminExcluded(v)).length;
+    const recordsByPlatform = emptyByPlatform();
+    for (const v of tagged) if (PLATFORMS.includes(v.platform)) recordsByPlatform[v.platform] += 1;
     const activeSet = activeIds[campaign];
     const dropReasons: Record<string, number> = {};
     for (const v of tagged) {
@@ -112,6 +138,14 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
             ? "discovery_review"
             : (ineligibilityReason(v, eligibilityFloorForCampaign(campaign), unassignedId) ?? "filtered_other");
       dropReasons[reason] = (dropReasons[reason] ?? 0) + 1;
+      droppedRecords.push({
+        tag: campaign,
+        platform: v.platform,
+        publishedAt: v.publishedAt,
+        hidden: v.hidden,
+        excluded: isAdminExcluded(v),
+        reason,
+      });
     }
     return {
       campaign,
@@ -122,6 +156,8 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
       excludedCount,
       droppedFromActive: tagged.length - activePublicCount,
       dropReasons,
+      activeByPlatform,
+      recordsByPlatform,
     };
   };
 
@@ -159,6 +195,7 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
     unassignedAdminOnlyCount,
     excludedGlobalCount,
     lastUpdated,
+    droppedRecords,
     invariants: {
       allViewsEqualsBootcampPlusMtl: allActiveTotalViews === sumViewsBM,
       allCountEqualsBootcampPlusMtl: allActivePublicCount === bootcamp.activePublicCount + mtl.activePublicCount,
