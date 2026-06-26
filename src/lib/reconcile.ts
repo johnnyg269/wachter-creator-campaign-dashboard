@@ -26,6 +26,9 @@ export interface DroppedRecord {
   hidden: boolean;
   excluded: boolean;
   reason: string;
+  /** Public post URL + title so a human can verify which content this is. */
+  url: string;
+  title: string | null;
 }
 
 export interface CampaignReconcile {
@@ -145,6 +148,8 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
         hidden: v.hidden,
         excluded: isAdminExcluded(v),
         reason,
+        url: v.originalUrl,
+        title: v.title,
       });
     }
     return {
