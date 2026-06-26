@@ -35,6 +35,7 @@ import { VideoThumb } from "@/components/ui/video-thumb";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { DataNotice } from "@/components/layout/data-notice";
 import { MomentumChart } from "@/components/charts/momentum-chart";
+import { CampaignBreakdownCard } from "@/components/dashboard/campaign-breakdown-card";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
 import { Leaderboard } from "@/components/dashboard/leaderboard";
 import { FeaturedVideo } from "@/components/dashboard/featured-video";
@@ -405,6 +406,8 @@ export default async function DashboardPage({
                 <MomentumChart
                   data={data.trend}
                   byPlatform={data.trendByPlatform}
+                  estimatedData={data.hasEstimatedHistory ? data.estimatedTrend : undefined}
+                  estimatedUntil={data.estimatedUntil}
                   height={380}
                   range={range}
                 />
@@ -520,6 +523,11 @@ export default async function DashboardPage({
               </div>
             )}
           </div>
+        </section>
+
+        {/* ── 3.4 · Combined campaign totals — All = Bootcamp + MTL ── */}
+        <section className="section-enter">
+          <CampaignBreakdownCard breakdown={data.campaignBreakdown} />
         </section>
 
         {/* ── 3.5 · Campaign milestones — real achievements, compact ── */}

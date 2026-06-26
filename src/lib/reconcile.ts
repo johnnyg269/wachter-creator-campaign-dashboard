@@ -190,6 +190,25 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
   const noVideoInTwoCampaigns = [...activeIds.bootcamp].every((id) => !activeIds.mtl.has(id));
   const sumViewsBM = sumViews([bootcamp.activeTotalViews, mtl.activeTotalViews]);
 
+  // Cross-check the ACTIVE id sets against the RAW store records (not the filter's
+  // own post-filtered output) — so a regression in the filter (e.g. exclusion no
+  // longer dominating in videoCampaign) would actually trip these, instead of
+  // tautologically passing.
+  const rawById = new Map(allRecords.map((v) => [v.id, v]));
+  const activeAll = [...activeIds.bootcamp, ...activeIds.mtl];
+  const noExcludedInActive = activeAll.every((id) => {
+    const r = rawById.get(id);
+    return r ? !isAdminExcluded(r) : true;
+  });
+  const noUnassignedInActive = activeAll.every((id) => {
+    const r = rawById.get(id);
+    return r ? campaignTag(r) !== null : true;
+  });
+  const noMtlRecordInBootcampActive = [...activeIds.bootcamp].every((id) => {
+    const r = rawById.get(id);
+    return r ? campaignTag(r) === "bootcamp" : true;
+  });
+
   return {
     generatedAt: now.toISOString(),
     bootcamp,
@@ -205,9 +224,9 @@ export async function reconcileCampaigns(store: Store = getStore(), now: Date = 
       allViewsEqualsBootcampPlusMtl: allActiveTotalViews === sumViewsBM,
       allCountEqualsBootcampPlusMtl: allActivePublicCount === bootcamp.activePublicCount + mtl.activePublicCount,
       noVideoInTwoCampaigns,
-      noExcludedInActive: allData.videos.every((v) => v.trackingStatus !== "excluded"),
-      noUnassignedInActive: allData.videos.every((v) => v.campaign !== null),
-      noMtlRecordInBootcampActive: bootcampData.videos.every((v) => v.campaign === "bootcamp"),
+      noExcludedInActive,
+      noUnassignedInActive,
+      noMtlRecordInBootcampActive,
     },
   };
 }

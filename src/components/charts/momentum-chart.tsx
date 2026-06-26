@@ -90,10 +90,12 @@ const METRICS: Metric[] = ["views", "engagements", "comments"];
 function buildRows(
   data: TrendPoint[],
   byPlatform: Partial<Record<Platform, TrendPoint[]>>,
+  estimated?: TrendPoint[],
 ): Row[] {
   const prev: Record<Metric, number | null> = { views: null, engagements: null, comments: null };
   const prevPlatform = new Map<Platform, Record<Metric, number | null>>();
   return data.map((p, i) => {
+    const est = estimated?.[i];
     const gained: Record<Metric, number | null> = { views: null, engagements: null, comments: null };
     for (const m of METRICS) {
       const v = p[m];
@@ -132,6 +134,10 @@ function buildRows(
       }
       prevPlatform.set(platform, prevP);
       rowGains[platform] = gains;
+    }
+    // Display-only estimated overlay (one key per metric); null when no estimate.
+    if (est) {
+      for (const m of METRICS) flat[`e_${m}`] = est[m];
     }
     return {
       t: p.t,
@@ -303,11 +309,18 @@ export function findSurges(
 export function MomentumChart({
   data,
   byPlatform,
+  estimatedData,
+  estimatedUntil = null,
   height = 340,
   range = "7d",
 }: {
   data: TrendPoint[];
   byPlatform: Partial<Record<Platform, TrendPoint[]>>;
+  /** DISPLAY-ONLY estimated history overlay (Bootcamp ramps from publish date).
+   *  Same length/buckets as `data`. Rendered as a dashed line; never affects KPIs. */
+  estimatedData?: TrendPoint[];
+  /** ISO before which the overlay is estimated (for the footnote). */
+  estimatedUntil?: string | null;
   height?: number;
   range?: ChartRange;
 }) {
@@ -322,8 +335,16 @@ export function MomentumChart({
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     () => false,
   );
-  const rows = useMemo(() => buildRows(data, byPlatform), [data, byPlatform]);
+  const rows = useMemo(() => buildRows(data, byPlatform, estimatedData), [data, byPlatform, estimatedData]);
   const meta = METRIC_META[metric];
+  // Estimated overlay shows only in Total mode and only when, for the active
+  // metric, the estimated series VISIBLY differs from the real line somewhere in
+  // the window (a genuine ramp to draw). Avoids a redundant dashed line drawn
+  // exactly on top of the solid line on ranges that are already fully tracked.
+  const hasEstimated =
+    Boolean(estimatedData?.length) &&
+    mode === "total" &&
+    rows.some((r) => r[`e_${metric}`] != null && r[`e_${metric}`] !== r[metric]);
   const withData = rows.filter((r) => r[metric] !== null);
   const last = withData[withData.length - 1] ?? null;
   const hasMetric = withData.length > 0;
@@ -482,6 +503,28 @@ export function MomentumChart({
                   animationBegin={reducedMotion ? 0 : 500}
                 />
               )),
+              // Display-only estimated history: dashed line ramping each Bootcamp
+              // video from its publish date. Equals the real line once tracking
+              // begins, so it sits under the solid line on the right. tooltipType
+              // none so it never adds a phantom entry.
+              hasEstimated && (
+                <Area
+                  key="estimated"
+                  type="monotone"
+                  dataKey={`e_${metric}`}
+                  stroke={meta.color}
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  strokeOpacity={0.55}
+                  fill="none"
+                  connectNulls
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={!reducedMotion}
+                  animationDuration={900}
+                  tooltipType="none"
+                />
+              ),
               !reducedMotion && (
                 <Area
                   key="glow"
@@ -573,6 +616,14 @@ export function MomentumChart({
             : "Bars show real growth per interval by platform"}
         </span>
       </div>
+      {hasEstimated && (
+        <p className="mt-1.5 flex items-center gap-1.5 px-1 text-[10px] text-muted-strong">
+          <span aria-hidden className="inline-block h-0 w-5 border-t-2 border-dashed" style={{ borderColor: meta.color, opacity: 0.6 }} />
+          Dashed = estimated Bootcamp history
+          {estimatedUntil ? ` before Bootcamp tracking began (~${new Date(estimatedUntil).toLocaleDateString("en-US", { month: "short", day: "numeric" })})` : ""}
+          , interpolated from publish dates &amp; current totals. Current totals and future growth are actual.
+        </p>
+      )}
     </div>
   );
 }

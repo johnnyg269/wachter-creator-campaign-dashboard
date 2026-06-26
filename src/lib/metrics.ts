@@ -203,6 +203,125 @@ export function aggregateTrend(
   return points;
 }
 
+/** Per-video input for the estimated historical trend. */
+export interface EstimatedVideoMeta {
+  id: string;
+  publishedAt: string | null;
+  /** True → fill the pre-first-snapshot gap with a 0→first-value ramp (Bootcamp). */
+  estimated: boolean;
+}
+
+/** First snapshot (time + value) where a field was actually reported. */
+function firstConfirmed(sorted: MetricSnapshot[], pick: (s: MetricSnapshot) => number | null): { t: number; v: number } | null {
+  for (const s of sorted) {
+    const v = pick(s);
+    if (v !== null) return { t: new Date(s.capturedAt).getTime(), v };
+  }
+  return null;
+}
+
+/**
+ * DISPLAY-ONLY estimated historical trend. Identical to aggregateTrend EXCEPT,
+ * for `estimated` videos (Bootcamp), the gap BEFORE the video's FIRST snapshot
+ * (of any field) is filled per-field with a straight 0→first-value ramp anchored
+ * at publishedAt (0 before publish; null when a field has no value to ramp to). At
+ * and after that first snapshot EVERY field uses the same last-known-good
+ * carry-forward as aggregateTrend — so this series is byte-for-byte equal to the
+ * real trend for all buckets at/after each video's first snapshot (and equal
+ * everywhere once every estimated video has data), and its final bucket equals the
+ * KPI total. Non-estimated videos behave exactly like aggregateTrend. This NEVER
+ * writes snapshots and is consumed only by the chart; KPIs / platform totals /
+ * reports / periodDelta read the real series.
+ *
+ * Why: Bootcamp back-catalog was imported in one day, so the real line cliffs up
+ * on import day. Ramping from each video's publish date shows a plausible history
+ * without inventing stored data.
+ */
+export function aggregateEstimatedTrend(
+  meta: EstimatedVideoMeta[],
+  snapshotsByVideo: Map<string, MetricSnapshot[]>,
+  from: Date,
+  to: Date,
+  buckets: number,
+): TrendPoint[] {
+  const points: TrendPoint[] = [];
+  const span = to.getTime() - from.getTime();
+  if (span <= 0 || buckets < 1) return points;
+
+  // Precompute per video: sorted snaps, publish ms, first-confirmed per field, and
+  // the video's FIRST snapshot time (any field). The ramp is gated on that single
+  // boundary so EVERY field switches to actual together once the video has real
+  // data — guaranteeing this series equals aggregateTrend for all buckets at/after
+  // it (a lagging field never keeps ramping past the first snapshot).
+  const prepared = meta.map((m) => {
+    const sorted = sortSnapshots(snapshotsByVideo.get(m.id) ?? []);
+    const pub = m.publishedAt ? new Date(m.publishedAt).getTime() : null;
+    return {
+      estimated: m.estimated && pub !== null, // can only ramp with a publish anchor
+      pub,
+      sorted,
+      firstSnapMs: sorted.length ? new Date(sorted[0].capturedAt).getTime() : null,
+      firstViews: firstConfirmed(sorted, (s) => s.views),
+      firstComments: firstConfirmed(sorted, (s) => s.comments),
+      firstEng: firstConfirmed(sorted, (s) => sumNullable([s.likes, s.comments, s.shares, s.saves, s.bookmarks])),
+    };
+  });
+
+  // Ramp value at time t: 0 before publish, linear to first.v by first.t, anchored
+  // at pub. Returns null when the field has no confirmed value to ramp toward, so a
+  // dataless estimated video contributes nothing (matches aggregateTrend — no fake
+  // 0-floor). Only ever used in the pre-first-snapshot gap, so it never overrides a
+  // real reading.
+  const ramp = (tMs: number, pub: number, first: { t: number; v: number } | null): number | null => {
+    if (!first) return null; // no data to estimate toward → contribute nothing
+    if (tMs <= pub) return 0;
+    if (first.t <= pub) return first.v;
+    const frac = (tMs - pub) / (first.t - pub);
+    return first.v * (frac < 0 ? 0 : frac > 1 ? 1 : frac);
+  };
+
+  for (let i = 1; i <= buckets; i++) {
+    const tIso = new Date(from.getTime() + (span * i) / buckets).toISOString();
+    const tMs = new Date(tIso).getTime();
+    let views: number | null = null;
+    let eng: number | null = null;
+    let comments: number | null = null;
+    for (const p of prepared) {
+      // Real last-known-good per field up to t (same logic as aggregateTrend).
+      let vLast: number | null = null;
+      let cLast: number | null = null;
+      let lkLast: number | null = null;
+      let shLast: number | null = null;
+      let svLast: number | null = null;
+      let bkLast: number | null = null;
+      for (const s of p.sorted) {
+        if (s.capturedAt > tIso) break;
+        if (s.views !== null) vLast = s.views;
+        if (s.comments !== null) cLast = s.comments;
+        if (s.likes !== null) lkLast = s.likes;
+        if (s.shares !== null) shLast = s.shares;
+        if (s.saves !== null) svLast = s.saves;
+        if (s.bookmarks !== null) bkLast = s.bookmarks;
+      }
+      const engLast = sumNullable([lkLast, cLast, shLast, svLast, bkLast]);
+
+      // Ramp ONLY before the video's first snapshot (any field). At/after it, every
+      // field uses the real last-known-good (possibly null) — identical to
+      // aggregateTrend — so no field keeps ramping past the first real reading.
+      const beforeFirstSnap = p.estimated && (p.firstSnapMs === null || tMs < p.firstSnapMs);
+      const vC = vLast !== null ? vLast : beforeFirstSnap ? ramp(tMs, p.pub as number, p.firstViews) : null;
+      const cC = cLast !== null ? cLast : beforeFirstSnap ? ramp(tMs, p.pub as number, p.firstComments) : null;
+      const eC = engLast !== null ? engLast : beforeFirstSnap ? ramp(tMs, p.pub as number, p.firstEng) : null;
+
+      if (vC !== null) views = (views ?? 0) + vC;
+      if (cC !== null) comments = (comments ?? 0) + cC;
+      if (eC !== null) eng = (eng ?? 0) + eC;
+    }
+    points.push({ t: tIso, views, engagements: eng, comments });
+  }
+  return points;
+}
+
 /**
  * True when there isn't enough history for a meaningful trend line —
  * fewer than 3 buckets with data, or all values identical (flat line).

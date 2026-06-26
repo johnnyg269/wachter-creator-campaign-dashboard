@@ -25,6 +25,7 @@ import {
   DAY_MS,
   HOUR_MS,
   aggregateTrend,
+  aggregateEstimatedTrend,
   computeVideoMetrics,
   engagements,
   deltaOverWindow,
@@ -413,14 +414,41 @@ export function describeSourceCapability(
   };
 }
 
+/** One campaign's combined-total figures for the breakdown card. */
+export interface CampaignTotals {
+  views: number | null;
+  videos: number;
+  pendingMetrics: number;
+}
+export interface CampaignBreakdown {
+  all: CampaignTotals;
+  bootcamp: CampaignTotals;
+  mtl: CampaignTotals;
+  /** Newest snapshot timestamp across all active campaigns. */
+  lastUpdated: string | null;
+}
+
 export interface DashboardData {
   campaign: Campaign;
   health: HealthSummary;
   kpis: Kpis;
+  /** All / Bootcamp / MTL combined totals (All === Bootcamp + MTL). Always the
+   * full picture, independent of the page's current campaign filter. */
+  campaignBreakdown: CampaignBreakdown;
   trend: TrendPoint[];
   /** Per-platform trend over the same buckets — feeds the chart tooltip's
    * platform breakdown and the growth-share narrative. */
   trendByPlatform: Partial<Record<Platform, TrendPoint[]>>;
+  /** DISPLAY-ONLY estimated trend: each Bootcamp video ramps from publish→its first
+   * snapshot, everything else is actual. Equal to `trend` for every bucket at/after
+   * a video's first snapshot. Chart-only — never feeds KPIs / totals / reports /
+   * periodDelta / milestones. */
+  estimatedTrend: TrendPoint[];
+  /** The latest first-snapshot across Bootcamp videos — the point after which the
+   * estimated series is fully actual (footnote boundary). Null when none. */
+  estimatedUntil: string | null;
+  /** True when the estimated layer meaningfully differs from the real line. */
+  hasEstimatedHistory: boolean;
   /** True when there's too little history for a meaningful line chart. */
   trendIsSparse: boolean;
   /** Gains across the selected range (first→last trend values). */
@@ -476,12 +504,44 @@ function rangeToMs(range: TimeRange): number | null {
   }
 }
 
+/**
+ * All / Bootcamp / MTL combined totals from a full ("all") campaign load. Views
+ * sum each video's last-confirmed value (== the KPI total); All === Bootcamp + MTL
+ * because every active video resolves to exactly one campaign. Display-only — the
+ * estimated trend never feeds this.
+ */
+export function buildCampaignBreakdown(allData: CampaignData): CampaignBreakdown {
+  const blank = (): { views: number | null; videos: number; pendingMetrics: number } => ({ views: null, videos: 0, pendingMetrics: 0 });
+  const acc = { all: blank(), bootcamp: blank(), mtl: blank() };
+  const add = (slot: { views: number | null; videos: number; pendingMetrics: number }, v: number | null) => {
+    slot.videos += 1;
+    if (v === null) slot.pendingMetrics += 1;
+    else slot.views = (slot.views ?? 0) + v;
+  };
+  let lastUpdated: string | null = null;
+  for (const v of allData.videos) {
+    // Only campaign-assigned videos count — guarantees All === Bootcamp + MTL even
+    // if a null-campaign (excluded/unassigned) row ever reaches this set.
+    if (v.campaign !== "bootcamp" && v.campaign !== "mtl") continue;
+    const views = allData.metricsByVideo.get(v.id)?.confirmed.views?.value ?? null;
+    add(acc.all, views);
+    if (v.campaign === "bootcamp") add(acc.bootcamp, views);
+    else add(acc.mtl, views);
+  }
+  for (const snaps of allData.snapshotsByVideo.values()) {
+    for (const s of snaps) if (lastUpdated === null || s.capturedAt > lastUpdated) lastUpdated = s.capturedAt;
+  }
+  return { ...acc, lastUpdated };
+}
+
 export async function getDashboardData(
   range: TimeRange = "7d",
   campaignFilter: CampaignFilter = "all",
 ): Promise<DashboardData> {
   const store = getStore();
   const data = await loadCampaignData(false, campaignFilter);
+  // Full breakdown for the combined-total card — reuse `data` when already "all".
+  const breakdownData = campaignFilter === "all" ? data : await loadCampaignData(false, "all");
   const health = await getHealth();
   const { videos, metricsByVideo, snapshotsByVideo, campaign } = data;
   const all = [...metricsByVideo.values()];
@@ -503,6 +563,10 @@ export async function getDashboardData(
   const from = requestedFrom > earliestFrom ? requestedFrom : earliestFrom;
   const spanMs = now.getTime() - from.getTime();
   const bucketCount = Math.min(48, Math.max(12, Math.round(spanMs / (30 * 60 * 1000))));
+  // Real series — feeds KPIs-adjacent display (periodDelta), the peak-growth
+  // milestone, and the printable reports. The estimated layer below is computed
+  // over the SAME window/buckets so it overlays 1:1, but the real trend is never
+  // re-windowed by the estimate (that would shift milestones/reports).
   const trend = aggregateTrend(snapshotsByVideo, from, now, bucketCount);
   // Same buckets per platform so rows align 1:1 with the aggregate trend.
   const trendByPlatform: Partial<Record<Platform, TrendPoint[]>> = {};
@@ -517,6 +581,34 @@ export async function getDashboardData(
       trendByPlatform[platform] = aggregateTrend(subset, from, now, bucketCount);
     }
   }
+  // DISPLAY-ONLY estimated trend (Bootcamp ramps from publish→its first snapshot;
+  // everything else actual). Same window/buckets as `trend`, so it equals `trend`
+  // for every bucket at/after each Bootcamp video's first snapshot. Consumed only
+  // by the chart overlay — NEVER by KPIs / platform totals / reports / periodDelta /
+  // milestones. Never writes snapshots.
+  const bootcampVideos = videos.filter((v) => v.campaign === "bootcamp");
+  const estimatedTrend = aggregateEstimatedTrend(
+    videos.map((v) => ({ id: v.id, publishedAt: v.publishedAt, estimated: v.campaign === "bootcamp" })),
+    snapshotsByVideo,
+    from,
+    now,
+    bucketCount,
+  );
+  // Boundary (for the footnote): the LATEST first-snapshot across Bootcamp videos —
+  // the point after which the estimated series is fully actual. Null when none.
+  let estimatedUntil: string | null = null;
+  for (const v of bootcampVideos) {
+    let firstSnap: string | null = null;
+    for (const s of snapshotsByVideo.get(v.id) ?? []) {
+      if (firstSnap === null || s.capturedAt < firstSnap) firstSnap = s.capturedAt;
+    }
+    if (firstSnap && (estimatedUntil === null || firstSnap > estimatedUntil)) estimatedUntil = firstSnap;
+  }
+  // Expose the layer only when it VISIBLY differs from the real line in this window
+  // (an actual ramp to show). Avoids a redundant dashed line + misleading footnote
+  // on ranges where every Bootcamp video already has real data across the window.
+  const hasEstimatedHistory =
+    bootcampVideos.length > 0 && estimatedTrend.some((p, i) => p.views !== (trend[i]?.views ?? null));
   const trendWithData = trend.filter((p) => p.views !== null);
   const firstPoint = trendWithData[0] ?? null;
   const lastPoint = trendWithData[trendWithData.length - 1] ?? null;
@@ -574,11 +666,15 @@ export async function getDashboardData(
     campaign,
     health,
     kpis: { ...kpis, fastestGrowing },
+    campaignBreakdown: buildCampaignBreakdown(breakdownData),
     historyStart: earliest,
     periodFastestGrowing,
     growthLeaders,
     trend,
     trendByPlatform,
+    estimatedTrend,
+    estimatedUntil,
+    hasEstimatedHistory,
     trendIsSparse: isSparseTrend(trend),
     periodDelta,
     sourceCapabilities: health.platforms.map((ph) => {
