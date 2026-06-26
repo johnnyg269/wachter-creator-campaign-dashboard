@@ -239,7 +239,7 @@ export default async function AdminPage() {
         </section>
 
         <section id="credits">
-          <CreditPanel credits={data.credits} tiers={data.tierSplit} />
+          <CreditPanel credits={data.credits} tiers={data.tierSplit} capInfo={data.creditCapInfo} />
         </section>
 
         <section id="bootcamp">

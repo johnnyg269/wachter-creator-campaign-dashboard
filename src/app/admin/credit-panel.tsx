@@ -6,6 +6,8 @@
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { TIER_LABELS } from "@/lib/refresh-tiers";
 import type { CreditSummary, TierSplit } from "@/lib/credit-policy";
+import type { CapOverride } from "@/lib/credit-cap";
+import { formatDateTime } from "@/lib/format";
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" | "bad" }) {
   const color = tone === "bad" ? "text-negative" : tone === "warn" ? "text-warning" : "text-foreground";
@@ -18,7 +20,15 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
-export function CreditPanel({ credits, tiers }: { credits: CreditSummary; tiers: TierSplit }) {
+export function CreditPanel({
+  credits,
+  tiers,
+  capInfo,
+}: {
+  credits: CreditSummary;
+  tiers: TierSplit;
+  capInfo?: { baseCap: number; activeCap: number; override: CapOverride | null };
+}) {
   const fmt = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-US"));
   const projTone = credits.projectedToday > credits.cap ? "bad" : credits.projectedToday > credits.cap * 0.9 ? "warn" : "ok";
   const usedTone = credits.capReached ? "bad" : credits.usedToday > credits.cap * 0.9 ? "warn" : "ok";
@@ -30,6 +40,15 @@ export function CreditPanel({ credits, tiers }: { credits: CreditSummary; tiers:
         subtitle="Option B: hot MTL every 15 min · warm MTL every 30 min · Bootcamp daily · removed never. Scheduled refreshes stop at the daily cap and carry the rest to the next day; last-known-good is preserved."
       />
       <CardBody className="space-y-4 text-xs">
+        {capInfo?.override ? (
+          <div className="rounded-lg border border-warning/50 bg-[rgba(251,191,36,0.08)] px-3 py-2 text-warning">
+            <span className="font-semibold">Temporary cap today: {fmt(capInfo.override.value)}</span> (normal {fmt(capInfo.baseCap)}) ·
+            active cap <b>{fmt(capInfo.activeCap)}</b> · expires {formatDateTime(capInfo.override.expiresAtIso)} ET → reverts to {fmt(capInfo.baseCap)} tomorrow
+            {capInfo.override.reason ? ` · ${capInfo.override.reason}` : ""}
+          </div>
+        ) : capInfo ? (
+          <div className="text-[11px] text-muted-strong">Daily cap: {fmt(capInfo.activeCap)} (no temporary override active)</div>
+        ) : null}
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <Stat
             label="Credits used today"

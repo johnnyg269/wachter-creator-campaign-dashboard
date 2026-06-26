@@ -94,6 +94,7 @@ import {
   type TrackingStatus,
 } from "./campaigns";
 import { summarizeCredits, tierSplit, type CreditSummary, type TierSplit } from "./credit-policy";
+import { resolveCreditCap, type CapOverride } from "./credit-cap";
 
 export type TimeRange = "24h" | "7d" | "30d" | "all";
 
@@ -1072,6 +1073,8 @@ export interface AdminPageData {
   credits: CreditSummary;
   /** Hot / Warm / Bootcamp / excluded refresh-tier split + Bootcamp batch cost. */
   tierSplit: TierSplit;
+  /** SocialCrawl cap: normal (env) vs today-only override (active value + expiry). */
+  creditCapInfo: { baseCap: number; activeCap: number; override: CapOverride | null };
   /** Per-platform comment ingestion health (admin-only). */
   commentHealth: CommentHealthRow[];
   /** YouTube provider health — API vs Apify fallback (never the key value). */
@@ -1495,14 +1498,18 @@ export async function getAdminPageData(): Promise<AdminPageData> {
   // display list above (a single active day is already ~270 attempts).
   const scPolicy = getRefreshPolicyConfig();
   const creditAttempts = await store.listCollectionAttempts(4000);
+  // Today-only cap override (if active) raises the effective cap; the panel shows
+  // both the normal (env) cap and the active value + expiry.
+  const resolvedCap = await resolveCreditCap(store, new Date());
   const credits = summarizeCredits({
     attempts: creditAttempts,
     now: new Date(),
     tz: scTz,
-    cap: getSocialcrawlDailyCreditCap(),
+    cap: resolvedCap.activeCap,
     activeStartHour: scPolicy.quietStartHour,
     activeEndHour: scPolicy.quietEndHour,
   });
+  const creditCapInfo = { baseCap: resolvedCap.baseCap, activeCap: resolvedCap.activeCap, override: resolvedCap.override };
   const tierSplitData = tierSplit(
     data.videos.map((v) => ({
       platform: v.platform,
@@ -1609,6 +1616,7 @@ export async function getAdminPageData(): Promise<AdminPageData> {
     socialcrawl,
     credits,
     tierSplit: tierSplitData,
+    creditCapInfo,
     commentHealth,
     youtubeProvider,
     readiness: {

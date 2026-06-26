@@ -39,7 +39,7 @@ import {
 import { applyMonotonicViews, engagementRate } from "./metrics";
 import { initialThumbState, mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
 import { isTikTokCdnHost } from "./thumb-proxy";
-import { apifyFallbackAllowedByConfig, getApifyDailyRunCap, getApifyDailySpendCapUsd } from "./config";
+import { apifyFallbackAllowedByConfig, getApifyDailyRunCap, getApifyDailySpendCapUsd, getSocialcrawlDailyCreditCap } from "./config";
 import { tagComment } from "./intel/keywords";
 import { classifyComment } from "./intel/sentiment";
 import { emitNewVideoAlert, emitRefreshFailureAlert, generateAlerts } from "./alerts";
@@ -229,6 +229,11 @@ async function doRefresh(
   const campaign = await ensureSeedData(store);
   const startedAt = new Date().toISOString();
   const log: string[] = [];
+  // Effective SocialCrawl cap = a today-only admin override if active, else the
+  // env default. Threaded into the cron policy + the per-post/comment budgets so
+  // the whole run honors one cap (auto-reverts when the override expires).
+  const { resolveCreditCap } = await import("./credit-cap");
+  const effectiveCreditCap = (await resolveCreditCap(store, new Date())).activeCap;
 
   // ── Refresh gate: expire crashed locks, then lock/freshness check ────────
   const recent = await store.listRefreshRuns(10);
@@ -258,6 +263,7 @@ async function doRefresh(
   }
   if (trigger === "cron") {
     const cfg = getRefreshPolicyConfig();
+    cfg.socialcrawlDailyCreditCap = effectiveCreditCap; // honor today-only override
     const attempts = await store.listCollectionAttempts(500);
     const nowD = new Date();
     const todayKey = localDateKey(nowD, cfg.quietTimezone);
@@ -338,7 +344,7 @@ async function doRefresh(
   // cadence + credit cap on every trigger so a manual click can't overspend.
   const respectTiers = trigger === "cron";
   for (const platform of PLATFORMS) {
-    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode, apifyAllowed, respectTiers);
+    const platformReport = await refreshPlatform(store, campaign, platform, log, run.id, mode, apifyAllowed, respectTiers, effectiveCreditCap);
     report.platforms.push(platformReport);
     if (platformReport.status === "failed" && platformReport.reason) {
       report.errors.push(`${platform}: ${platformReport.reason}`);
@@ -418,6 +424,7 @@ async function refreshPlatform(
   mode: RunMode = { light: false, discovery: true, comments: true },
   apifyAllowed = false,
   respectTiers = false,
+  effectiveCreditCap = getSocialcrawlDailyCreditCap(),
 ): Promise<RefreshReport["platforms"][number]> {
   const out: RefreshReport["platforms"][number] = {
     platform,
@@ -524,7 +531,7 @@ async function refreshPlatform(
           new Date(),
           rcfg.quietTimezone,
         ).credits;
-        commentBudget = Math.max(0, rcfg.socialcrawlDailyCreditCap - usedToday - COMMENT_CREDIT_RESERVE);
+        commentBudget = Math.max(0, effectiveCreditCap - usedToday - COMMENT_CREDIT_RESERVE);
       }
       // Option B (Part 10): comment/detail (text + per-post engagement) pulls are
       // limited to the hot-MTL subset — Bootcamp + cold/warm are off by default
@@ -834,7 +841,7 @@ async function refreshPlatform(
           nowPP,
           rcfg.quietTimezone,
         ).credits;
-        headroom = Math.max(0, rcfg.socialcrawlDailyCreditCap - usedToday - PERPOST_CREDIT_RESERVE);
+        headroom = Math.max(0, effectiveCreditCap - usedToday - PERPOST_CREDIT_RESERVE);
       }
       const limit = Math.min(due.length, MAX_PERPOST_PER_CYCLE, isSc ? headroom : Infinity);
       let processed = 0;

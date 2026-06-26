@@ -207,7 +207,9 @@ export interface Alert {
 
 export interface ManualOverride {
   id: string;
-  entityType: "video" | "campaign" | "snapshot" | "episode";
+  // "config" rows are admin runtime settings (e.g. a today-only credit-cap
+  // override) stored schema-free in this audit table — no DB migration needed.
+  entityType: "video" | "campaign" | "snapshot" | "episode" | "config";
   entityId: string;
   field: string;
   oldValue: string | null;
