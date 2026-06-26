@@ -74,9 +74,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const catchup = await bootcampMetricsCatchup(store, {
       resolveMetrics,
       activeCap: resolved.activeCap,
-      // Re-read the shared credit log before each billable call so the catch-up
-      // stops at the LIVE cap even if a scheduled refresh spends concurrently.
-      liveUsedToday: async () => socialcrawlCreditsToday(await store.listCollectionAttempts(4000), now, tz).credits,
+      // Re-read the shared credit log (periodically inside the loop) so the catch-up
+      // stops at the LIVE cap even if a scheduled refresh spends concurrently. 2000
+      // rows comfortably covers a single ET day's attempts across all providers.
+      liveUsedToday: async () => socialcrawlCreditsToday(await store.listCollectionAttempts(2000), now, tz).credits,
+      maxToProcess: Number.isFinite(Number(body.limit)) && Number(body.limit) > 0 ? Math.floor(Number(body.limit)) : undefined,
       now,
     });
     return NextResponse.json({ ok: true, cap: capInfo, ran: true, catchup });

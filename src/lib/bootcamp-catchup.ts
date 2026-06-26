@@ -30,6 +30,8 @@ export interface CatchupResult {
   byPlatform: Record<Platform, PlatformCounts>;
   creditsUsed: number;
   capStopped: boolean;
+  /** True when this invocation hit `maxToProcess` and left more pending to resume. */
+  limitReached: boolean;
   deadUrls: string[];
 }
 
@@ -63,20 +65,24 @@ export async function bootcampMetricsCatchup(
      * can never exceed `activeCap` (no overspend from a stale snapshot).
      */
     liveUsedToday: () => Promise<number>;
+    /** Max videos to actually fetch this invocation (resumable). Omit = no limit. */
+    maxToProcess?: number;
     now?: Date;
   },
 ): Promise<CatchupResult> {
   const now = deps.now ?? new Date();
   const nowIso = now.toISOString();
   const activeCap = Math.max(0, Math.floor(deps.activeCap));
+  const maxToProcess = deps.maxToProcess && deps.maxToProcess > 0 ? deps.maxToProcess : Infinity;
 
   const byPlatform: Record<Platform, PlatformCounts> = {
     tiktok: emptyCounts(), instagram: emptyCounts(), facebook: emptyCounts(), youtube: emptyCounts(),
   };
   const res: CatchupResult = {
     pendingBefore: 0, filled: 0, stillPending: 0, failed: 0, byPlatform,
-    creditsUsed: 0, capStopped: false, deadUrls: [],
+    creditsUsed: 0, capStopped: false, limitReached: false, deadUrls: [],
   };
+  let processed = 0;
 
   const pending = (await store.listVideos({ includeHidden: true })).filter(isPendingBootcamp);
   for (const v of pending) {
@@ -86,17 +92,37 @@ export async function bootcampMetricsCatchup(
   // YouTube (free) before SocialCrawl (billable) so free fills never consume the cap.
   const ordered = [...pending].sort((a, b) => (a.platform === "youtube" ? -1 : 0) - (b.platform === "youtube" ? -1 : 0));
 
+  // Cap gate: track live spend with periodic re-sync rather than a read per video
+  // (a per-video log read is far too slow on Postgres). `liveAtSync` is the last
+  // live total; `sinceSync` is this run's billable spend since then. The projected
+  // total = liveAtSync + sinceSync. Re-sync every SYNC_EVERY billable calls and
+  // always confirm with a fresh read before stopping — so concurrent cron spend is
+  // picked up quickly and we still never meaningfully exceed the cap.
+  const SYNC_EVERY = 10;
+  let liveAtSync = await deps.liveUsedToday();
+  let sinceSync = 0;
+
   for (const v of ordered) {
+    if (processed >= maxToProcess) {
+      res.limitReached = true;
+      break; // remaining stay pending (resume on the next invocation)
+    }
     const billable = isSocialcrawlPlatform(v.platform);
     if (billable) {
-      // Gate on LIVE spend (shared log) — stop the moment the active cap is reached,
-      // accounting for any concurrent scheduled-refresh credits. Never overspend.
-      const usedNow = await deps.liveUsedToday();
-      if (usedNow >= activeCap) {
-        res.stillPending++;
-        byPlatform[v.platform].stillPending++;
-        res.capStopped = true;
-        continue;
+      if (sinceSync >= SYNC_EVERY) {
+        liveAtSync = await deps.liveUsedToday();
+        sinceSync = 0;
+      }
+      if (liveAtSync + sinceSync >= activeCap) {
+        // Near/at the cap — confirm with a fresh live read before stopping.
+        liveAtSync = await deps.liveUsedToday();
+        sinceSync = 0;
+        if (liveAtSync >= activeCap) {
+          res.stillPending++;
+          byPlatform[v.platform].stillPending++;
+          res.capStopped = true;
+          continue;
+        }
       }
     }
     let metrics: NormalizedVideo | null = null;
@@ -105,8 +131,10 @@ export async function bootcampMetricsCatchup(
     } catch {
       metrics = null;
     }
+    processed += 1; // counts toward maxToProcess (an actual fetch happened)
     if (billable) {
       res.creditsUsed += 1;
+      sinceSync += 1;
       await store.addCollectionAttempt({
         refreshRunId: null,
         platform: v.platform,

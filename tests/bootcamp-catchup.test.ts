@@ -76,6 +76,22 @@ describe("bootcampMetricsCatchup", () => {
     expect(res.creditsUsed).toBe(1);
   });
 
+  it("maxToProcess bounds one invocation (resumable); rest stay pending", async () => {
+    const store = getStore();
+    const c = await ensureSeedData(store);
+    const v1 = await ins(store, c.id, {}); await ins(store, c.id, {}); await ins(store, c.id, {});
+    const res = await bootcampMetricsCatchup(store, { resolveMetrics: async (_p, url) => nv({ originalUrl: url }), activeCap: 600, liveUsedToday: liveUsed(store), maxToProcess: 2 });
+    expect(res.filled).toBe(2);
+    expect(res.limitReached).toBe(true);
+    expect(res.creditsUsed).toBe(2);
+    // a second invocation resumes the remaining one
+    const res2 = await bootcampMetricsCatchup(store, { resolveMetrics: async (_p, url) => nv({ originalUrl: url }), activeCap: 600, liveUsedToday: liveUsed(store), maxToProcess: 2 });
+    expect(res2.pendingBefore).toBe(1);
+    expect(res2.filled).toBe(1);
+    expect(res2.limitReached).toBe(false);
+    expect((await store.getVideo(v1.id))!.lastRefreshedAt).not.toBeNull();
+  });
+
   it("never overspends the live cap: prior/concurrent spend (349) leaves only 1 of 350", async () => {
     const store = getStore();
     const c = await ensureSeedData(store);
