@@ -28,7 +28,7 @@ import {
   isReviewCandidate,
   UNASSIGNED_EPISODE_NAME,
 } from "./eligibility";
-import { isAdminExcluded, videoCampaign } from "./campaigns";
+import { carryOverAdminTags, isAdminExcluded, videoCampaign } from "./campaigns";
 import {
   commentEligibleForTier,
   getRefreshTierConfig,
@@ -1080,6 +1080,10 @@ async function healExistingVideo(store: Store, existing: Video, n: NormalizedVid
   const rawObj = n.rawJson && typeof n.rawJson === "object" ? { ...(n.rawJson as Record<string, unknown>) } : {};
   delete rawObj.discoveryReview;
   delete rawObj.discoveryReviewReason;
+  // Preserve the campaign tag across the heal (the provider payload doesn't carry
+  // it). Tracking is intentionally cleared here — this path deliberately un-excludes.
+  const exRaw = existing.rawJson && typeof existing.rawJson === "object" ? (existing.rawJson as Record<string, unknown>) : {};
+  if ("campaign" in exRaw) rawObj.campaign = exRaw.campaign;
   return store.updateVideo(existing.id, {
     publishedAt: n.publishedAt ?? existing.publishedAt,
     hidden: false,
@@ -1181,7 +1185,14 @@ async function upsertFetchedVideo(
       status: "active",
       sourceStatus: "live",
       errorMessage: null,
-      rawJson: mergeThumbIntoRaw(n.rawJson ?? existing.rawJson, ts.thumb) as Video["rawJson"],
+      // Preserve the admin/campaign-controlled rawJson keys (campaign tag, tracking
+      // status, discovery flags) — the provider payload doesn't carry them, so
+      // without this every refresh would strip a Bootcamp video's tag (reverting it
+      // to the MTL default) and silently drop it from its campaign totals.
+      rawJson: mergeThumbIntoRaw(
+        carryOverAdminTags(existing.rawJson, n.rawJson ?? existing.rawJson),
+        ts.thumb,
+      ) as Video["rawJson"],
     });
   }
 

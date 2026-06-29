@@ -47,6 +47,27 @@ function rawObj(v: RawWithTags): Record<string, unknown> {
   return v.rawJson && typeof v.rawJson === "object" ? (v.rawJson as Record<string, unknown>) : {};
 }
 
+/** Admin/campaign-controlled rawJson keys that a provider refresh must NOT clobber. */
+const ADMIN_RAW_KEYS = ["campaign", "tracking", "discoveryReview", "discoveryReviewReason"] as const;
+
+/**
+ * Carry admin/campaign-controlled rawJson keys (campaign tag, tracking status,
+ * discovery-review flags) from the EXISTING record onto a FRESH provider payload.
+ * A metrics refresh rewrites rawJson from the provider, which does not include
+ * these admin-set fields — without this, every refresh silently drops a video's
+ * campaign tag (reverting Bootcamp → untagged → MTL default) and its removed-from-
+ * tracking state. Returns a new object; never mutates inputs.
+ */
+export function carryOverAdminTags(existingRaw: unknown, freshRaw: unknown): Record<string, unknown> {
+  const existing = existingRaw && typeof existingRaw === "object" ? (existingRaw as Record<string, unknown>) : {};
+  const fresh = freshRaw && typeof freshRaw === "object" ? { ...(freshRaw as Record<string, unknown>) } : {};
+  for (const k of ADMIN_RAW_KEYS) {
+    if (k in existing) fresh[k] = existing[k];
+    else delete fresh[k]; // existing had none → ensure the fresh payload doesn't invent one
+  }
+  return fresh;
+}
+
 /** Admin deliberately removed this video from tracking (soft delete). */
 export function isAdminExcluded(v: RawWithTags): boolean {
   const t = rawObj(v).tracking as { status?: string } | undefined;
