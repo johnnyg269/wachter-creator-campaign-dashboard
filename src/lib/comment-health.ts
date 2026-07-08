@@ -7,8 +7,9 @@
 
 import { isAdminExcluded, videoCampaign } from "./campaigns";
 import { getYouTubeApiKey } from "./config";
+import { resolveCreditCap } from "./credit-cap";
 import { eligibilityFloorForCampaign, isCampaignEligible } from "./eligibility";
-import { getRefreshPolicyConfig } from "./refresh-policy";
+import { getRefreshPolicyConfig, socialcrawlCreditsToday } from "./refresh-policy";
 import { commentEligibleForTier, getRefreshTierConfig, videoAgeDays, videoRefreshTier, type RefreshTier } from "./refresh-tiers";
 import { getStore } from "./store";
 import type { Store } from "./store/types";
@@ -16,6 +17,9 @@ import type { Platform } from "./types";
 
 const PLATFORMS: Platform[] = ["tiktok", "instagram", "facebook", "youtube"];
 const DAY = 86_400_000;
+/** Kept in sync with COMMENT_CREDIT_RESERVE in refresh.ts (the comment lane holds
+ *  this back so a comment cycle never overshoots the daily cap). */
+const COMMENT_CREDIT_RESERVE = 20;
 
 export interface CommentHealth {
   generatedAt: string;
@@ -49,6 +53,15 @@ export interface CommentHealth {
     pullsPerDay: number;
     socialcrawlDailyCreditCap: number;
     youtubeApiEnabled: boolean;
+  };
+  /** SocialCrawl comment-budget contention — the actual gate for TT/IG/FB comments. */
+  credits: {
+    activeCap: number;
+    usedToday: number;
+    /** max(0, cap − usedToday − reserve): SocialCrawl credits available for comment
+     *  text right now. 0 ⇒ TT/IG/FB comment text skipped this cycle (cap reached). */
+    commentBudgetNow: number;
+    capReached: boolean;
   };
   /** Plain-English explanation for the admin panel. */
   explanation: string;
@@ -123,12 +136,20 @@ export async function computeCommentHealth(store: Store = getStore(), now: Date 
 
   const newestMtlAgeDays = newestMtlMs === null ? null : (nowMs - newestMtlMs) / DAY;
 
+  // Credit contention — the actual gate for SocialCrawl (TT/IG/FB) comment text.
+  const activeCap = (await resolveCreditCap(store, now)).activeCap;
+  const usedToday = socialcrawlCreditsToday(await store.listCollectionAttempts(1000), now, policy.quietTimezone).credits;
+  const commentBudgetNow = Math.max(0, activeCap - usedToday - COMMENT_CREDIT_RESERVE);
+  const capReached = commentBudgetNow === 0;
+
   const explanation =
-    eligibleForComments > 0
-      ? `${eligibleForComments} hot MTL video(s) are currently comment-eligible; comment text pulls run at ${policy.commentDetailWindows.join(":00, ")}:00 ET.`
-      : newestMtlAgeDays !== null && newestMtlAgeDays > tierCfg.hotVideoAgeDays
-        ? `No videos are currently comment-eligible. Comment text pulls are limited to HOT MTL videos (MTL published within ${tierCfg.hotVideoAgeDays} days); the newest MTL video is ${newestMtlAgeDays.toFixed(1)} days old, so all MTL content has aged out of "hot". Bootcamp (${tierCfg.bootcampCommentDetail ? "on" : "off"}) and cold/warm (${tierCfg.coldCommentDetail ? "on" : "off"}) comment detail are disabled by default for cost control. This is expected behavior, not a failure — comment counts still update with every metrics refresh.`
-        : `No hot MTL videos qualify for comment text right now (cost-control gating). Comment counts still update with metrics.`;
+    eligibleForComments === 0
+      ? newestMtlAgeDays !== null && newestMtlAgeDays > tierCfg.hotVideoAgeDays
+        ? `No videos are comment-eligible: comment text is limited to HOT MTL (published within ${tierCfg.hotVideoAgeDays} days); the newest MTL video is ${newestMtlAgeDays.toFixed(1)} days old, so all MTL has aged out of "hot". Bootcamp/cold comment detail are off by default. Comment counts still update with metrics.`
+        : `No hot MTL videos qualify for comment text right now. Comment counts still update with metrics.`
+      : capReached
+        ? `${eligibleForComments} hot MTL video(s) ARE comment-eligible, but SocialCrawl's daily credit cap is reached (used ${usedToday}/${activeCap}) so the comment budget is 0 — TikTok/Instagram/Facebook comment TEXT is being SKIPPED this cycle (cap contention: the metrics sweeps consume the cap before the ${policy.commentDetailWindows.join(":00/")}:00 ET comment windows). YouTube comment text is unaffected (free Data API). Comment COUNTS still update for all platforms. Fix: run a small admin comment catch-up (raises today's cap by a limited amount), or free daily headroom.`
+        : `${eligibleForComments} hot MTL video(s) are comment-eligible with ${commentBudgetNow} SocialCrawl comment-credits available; text pulls run at ${policy.commentDetailWindows.join(":00/")}:00 ET.`;
 
   return {
     generatedAt: now.toISOString(),
@@ -157,6 +178,7 @@ export async function computeCommentHealth(store: Store = getStore(), now: Date 
       socialcrawlDailyCreditCap: policy.socialcrawlDailyCreditCap,
       youtubeApiEnabled: getYouTubeApiKey() !== null,
     },
+    credits: { activeCap, usedToday, commentBudgetNow, capReached },
     explanation,
   };
 }
