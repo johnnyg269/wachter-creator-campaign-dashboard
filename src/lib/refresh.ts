@@ -79,6 +79,15 @@ const COMMENT_CREDIT_RESERVE = 20;
 /** SocialCrawl credits held back from the per-post DUE lane (Option B): leaves
  *  headroom under the daily cap for the next tick's sweep + the comment cycle. */
 const PERPOST_CREDIT_RESERVE = 30;
+/** Additional daily headroom the metrics per-post lane leaves for the twice-daily
+ *  comment windows, so a heavy metrics day (e.g. the 151-video Bootcamp daily
+ *  batch) can't consume the whole cap and starve TikTok/Instagram/Facebook comment
+ *  TEXT. Preserves the cap (total ≤ cap); tunable via env. */
+const COMMENT_DAILY_RESERVE = (() => {
+  const raw = process.env.COMMENT_DAILY_RESERVE;
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 30;
+})();
 /** Max per-post DUE fetches per platform per cycle — spreads the Bootcamp daily
  *  batch over several ticks and bounds run time well under maxDuration. */
 const MAX_PERPOST_PER_CYCLE = 15;
@@ -841,7 +850,10 @@ async function refreshPlatform(
           nowPP,
           rcfg.quietTimezone,
         ).credits;
-        headroom = Math.max(0, effectiveCreditCap - usedToday - PERPOST_CREDIT_RESERVE);
+        // Reserve headroom for BOTH the next sweep AND the comment windows, so the
+        // heavy Bootcamp daily metrics batch can't consume the whole cap and starve
+        // TikTok/Instagram/Facebook comment text (the incident that stopped comments).
+        headroom = Math.max(0, effectiveCreditCap - usedToday - PERPOST_CREDIT_RESERVE - COMMENT_DAILY_RESERVE);
       }
       const limit = Math.min(due.length, MAX_PERPOST_PER_CYCLE, isSc ? headroom : Infinity);
       let processed = 0;
