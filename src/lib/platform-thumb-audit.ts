@@ -200,5 +200,5 @@ export async function auditPlatformThumbnails(
   const headline = tt
     ? `TikTok: ${tt.totalActive} active · ${tt.storedUrlMissing} no-URL · stored-URL by format ${JSON.stringify(tt.extBreakdown)}${ttHeic ? ` · ${ttHeic} HEIC (browser cannot render)` : ""}`
     : "no TikTok videos";
-  return { generatedAt: now.toISOString(), byPlatform, headline };
+  return { generatedAt: now.toISOString(), byPlatform, headline, debugTikTokUrl };
 }
