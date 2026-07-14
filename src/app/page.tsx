@@ -65,7 +65,9 @@ const PLATFORM_HEX: Record<Platform, string> = {
 };
 
 function parseRange(value: string | string[] | undefined): TimeRange {
-  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "7d";
+  // Homepage default is 30d (fuller campaign view on first land); an explicit
+  // ?range= always wins, so a user's selection is never overridden.
+  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "30d";
 }
 
 /** Per-platform share of view growth across the selected range. */

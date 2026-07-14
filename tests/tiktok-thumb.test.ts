@@ -42,7 +42,9 @@ describe("/api/thumb — HEIC transcode + passthrough", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   const stubUpstream = (contentType: string, body: Uint8Array = new Uint8Array([1, 2, 3, 4]), status = 200) =>
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(status === 200 ? body : null, { status, headers: { "content-type": contentType } })));
+    // .slice().buffer yields a plain ArrayBuffer (valid BodyInit) — sidesteps the
+    // TS lib quirk where Uint8Array<ArrayBufferLike> isn't assignable to BodyInit.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(status === 200 ? body.slice().buffer : null, { status, headers: { "content-type": contentType } })));
 
   const call = (src: string) => GET(new NextRequest(`https://app/api/thumb?src=${encodeURIComponent(src)}`));
 
