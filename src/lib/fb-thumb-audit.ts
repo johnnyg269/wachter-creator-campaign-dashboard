@@ -7,24 +7,11 @@
 import { isAdminExcluded, videoCampaign } from "./campaigns";
 import { getStore } from "./store";
 import type { Store } from "./store/types";
-import { isAllowedThumbHost } from "./thumb-proxy";
+import { isAllowedThumbHost, probeImageUrl } from "./thumb-proxy";
 import { readThumbState, type ThumbnailStatus } from "./thumbnail-state";
 import type { Video } from "./types";
 
 const LIVE_SAMPLE = 40;
-const FETCH_TIMEOUT_MS = 7000;
-
-/** Same check the /api/thumb proxy performs: ok + image content-type. */
-async function probe(url: string): Promise<{ live: boolean; detail: string }> {
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store", headers: { Accept: "image/*" } });
-    const type = r.headers.get("content-type") ?? "";
-    if (r.ok && type.startsWith("image/")) return { live: true, detail: `ok ${type}` };
-    return { live: false, detail: `HTTP ${r.status}${type ? ` ${type}` : ""}` };
-  } catch {
-    return { live: false, detail: "fetch failed/timeout" };
-  }
-}
 
 export interface FbThumbAudit {
   generatedAt: string;
@@ -86,7 +73,7 @@ export async function auditFacebookThumbnails(store: Store = getStore(), now: Da
   let liveOk = 0, expired = 0;
   const examples: FbThumbAudit["liveTest"]["examples"] = [];
   for (const v of sampleable) {
-    const res = await probe(v.thumbnailUrl!);
+    const res = await probeImageUrl(v.thumbnailUrl!);
     if (res.live) liveOk++; else expired++;
     if (examples.length < 12) {
       examples.push({

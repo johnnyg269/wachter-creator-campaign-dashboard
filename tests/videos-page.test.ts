@@ -183,15 +183,22 @@ describe("Videos page structure & safety (source-level)", () => {
   const explorer = read("src/app/videos/videos-explorer.tsx");
   const spark = read("src/components/charts/sparkline.tsx");
 
-  it("the page is read-only — no refresh controls, no mutation endpoints", () => {
+  it("public view is read-only — no refresh controls, no cost-bearing endpoints", () => {
     for (const src of [page, explorer]) {
       expect(src).not.toContain("RefreshButton");
       expect(src).not.toContain("/api/refresh");
       expect(src).not.toContain("/api/cron/refresh");
-      expect(src).not.toContain("/api/admin");
     }
-    // No mutating fetches at all from the explorer.
-    expect(explorer).not.toMatch(/fetch\(/);
+  });
+  it("the ONLY mutation the explorer can make is the admin-gated remove/restore route", () => {
+    // The explorer now supports admin remove/restore. Its single fetch target is
+    // the admin videos route (guardAdmin-enforced server-side); it never hits a
+    // public/cron mutation, and the control object is null unless isAdmin.
+    const fetchTargets = [...explorer.matchAll(/fetch\(`([^`]+)`/g)].map((m) => m[1]);
+    expect(fetchTargets.length).toBe(1);
+    expect(fetchTargets[0]).toContain("/api/admin/videos/");
+    expect(explorer).toContain("const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove } : null;");
+    expect(explorer).toContain("{admin && <RemoveButton");
   });
   it("exposes no actor IDs or vendor names", () => {
     for (const src of [page, explorer]) {

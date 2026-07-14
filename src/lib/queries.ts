@@ -964,6 +964,60 @@ export async function getVideosPageData(
   };
 }
 
+/** A removed-from-tracking (admin-excluded) video, for the admin-only Removed
+ *  view on the Videos page. Minimal, serializable shape — no rawJson. */
+export interface RemovedVideoRow {
+  id: string;
+  platform: Platform;
+  title: string | null;
+  caption: string | null;
+  thumbnailUrl: string | null;
+  originalUrl: string;
+  publishedAt: string | null;
+  views: number | null;
+  removedReason: string | null;
+  removedAt: string | null;
+}
+
+/**
+ * Admin-only: every video an admin has removed from tracking (soft-excluded),
+ * newest-removed first. Uses the admin-unscoped load so excluded videos (which
+ * every public query drops) are visible, then reads the removal reason/time from
+ * the store record. Never called on a public path.
+ */
+export async function getRemovedVideosForAdmin(): Promise<RemovedVideoRow[]> {
+  const store = getStore();
+  // Unscoped + includeHidden so excluded videos survive both chokepoints.
+  const data = await loadCampaignData(true, "all", true);
+  const removed = data.videos.filter((v) => v.trackingStatus === "excluded");
+  if (removed.length === 0) return [];
+  // rawJson was stripped in loadCampaignData; re-read the raw records once to
+  // recover the removal reason/time recorded by trackingPatch.
+  const rawById = new Map((await store.listVideos({ includeHidden: true })).map((v) => [v.id, v]));
+  const rows: RemovedVideoRow[] = removed.map((v) => {
+    const raw = rawById.get(v.id);
+    const tracking =
+      raw?.rawJson && typeof raw.rawJson === "object"
+        ? ((raw.rawJson as Record<string, unknown>).tracking as
+            | { reason?: string; excludedAt?: string; at?: string }
+            | undefined)
+        : undefined;
+    return {
+      id: v.id,
+      platform: v.platform,
+      title: v.title,
+      caption: v.caption,
+      thumbnailUrl: v.thumbnailUrl,
+      originalUrl: v.originalUrl,
+      publishedAt: v.publishedAt,
+      views: data.metricsByVideo.get(v.id)?.confirmed.views?.value ?? null,
+      removedReason: tracking?.reason ?? null,
+      removedAt: tracking?.excludedAt ?? tracking?.at ?? null,
+    };
+  });
+  return rows.sort((a, b) => (b.removedAt ?? "").localeCompare(a.removedAt ?? ""));
+}
+
 // ---------------------------------------------------------------------------
 // Comments page
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
 import { resolveProvider } from "./providers/registry";
 import { campaignStartMs, isCampaignEligible, isReviewCandidate, UNASSIGNED_EPISODE_NAME } from "./eligibility";
 import { mergeThumbIntoRaw, nextThumbnailState, readThumbState } from "./thumbnail-state";
-import { isTikTokCdnHost } from "./thumb-proxy";
+import { isAllowedThumbHost, isTikTokCdnHost, probeImageUrl } from "./thumb-proxy";
 import { getRefreshPolicyConfig, socialcrawlCreditsToday } from "./refresh-policy";
 import type { Store } from "./store/types";
 import type { NormalizedVideo, Platform, Video } from "./types";
@@ -40,6 +40,10 @@ export interface ThumbnailRepairResult {
   byPlatform: Record<string, { missing: number; checked: number; repaired: number }>;
   failures: ThumbnailRepairFailure[];
   creditCapReached: boolean;
+  /** verifyFacebook pass: stored fbcdn covers server-probed this run. */
+  facebookCoversProbed: number;
+  /** verifyFacebook pass: probed covers found expired/dead (proxy would 404). */
+  facebookDeadCovers: number;
   ranAt: string;
 }
 
@@ -54,9 +58,12 @@ function slugOf(url: string | null): string {
   }
 }
 
+/** Max stored fbcdn covers to server-probe in a verifyFacebook pass (free, no credits). */
+const MAX_FB_PROBE = 200;
+
 export async function repairMissingThumbnails(
   store: Store,
-  opts: { maxTotal?: number; force?: boolean } = {},
+  opts: { maxTotal?: number; force?: boolean; verifyFacebook?: boolean } = {},
 ): Promise<ThumbnailRepairResult> {
   const maxTotal = opts.maxTotal ?? DEFAULT_MAX;
   // force=true (explicit admin "Repair now") also retries covers previously
@@ -64,21 +71,26 @@ export async function repairMissingThumbnails(
   // endpoint is a different source they may never have been tried against. The
   // automatic/default path keeps the anti-churn skip so it never re-spends.
   const force = opts.force ?? false;
+  // verifyFacebook=true additionally server-probes FB videos that DO have a
+  // stored fbcdn URL and re-resolves only the ones whose signed URL has expired
+  // (proxy would 404 → placeholder). A live cover is never touched.
+  const verifyFacebook = opts.verifyFacebook ?? false;
   const ranAt = new Date().toISOString();
   const cfg = getRefreshPolicyConfig();
   const startMs = campaignStartMs();
   const groups = await store.listEpisodeGroups();
   const unassignedId = groups.find((g) => g.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
 
-  // Active, eligible campaign videos that currently have no stored thumbnail.
-  // Excludes pending discovery-review candidates (defense-in-depth, mirroring
-  // the public query convention) — they're not counted anywhere public, so we
-  // never spend a credit repairing one.
-  const missing = (await store.listVideos({ includeHidden: true }))
+  // Active, eligible campaign videos, excluding pending discovery-review
+  // candidates (defense-in-depth, mirroring the public query convention) — they
+  // are never counted anywhere public, so we never spend a credit on one.
+  const eligible = (await store.listVideos({ includeHidden: true }))
     .filter((v) => !v.hidden)
     .filter((v) => !isReviewCandidate(v))
-    .filter((v) => isCampaignEligible(v, startMs, unassignedId))
-    .filter((v) => !v.thumbnailUrl);
+    .filter((v) => isCampaignEligible(v, startMs, unassignedId));
+
+  // Primary set: videos with NO stored thumbnail at all.
+  const missing = eligible.filter((v) => !v.thumbnailUrl);
 
   const result: ThumbnailRepairResult = {
     missingAtStart: missing.length,
@@ -88,13 +100,45 @@ export async function repairMissingThumbnails(
     byPlatform: {},
     failures: [],
     creditCapReached: false,
+    facebookCoversProbed: 0,
+    facebookDeadCovers: 0,
     ranAt,
   };
-  for (const v of missing) {
+
+  // verifyFacebook pass: FB videos that DO have a stored proxiable cover but whose
+  // signed fbcdn URL has silently expired (proxy 404 → placeholder, yet status
+  // stays "valid" forever so nothing re-queues them). Server-probe with the exact
+  // same fetch the proxy uses; only the DEAD ones become repair candidates —
+  // live covers are left untouched (never overwrite a good thumbnail). Probing
+  // is free (no provider credit) and de-duped against the no-URL set.
+  const deadCovers: Video[] = [];
+  if (verifyFacebook) {
+    const probeTargets = eligible
+      .filter((v) => v.platform === "facebook")
+      .filter((v) => v.thumbnailUrl && isAllowedThumbHost(v.thumbnailUrl))
+      // oldest-refreshed first: most likely already expired
+      .sort((a, b) => (a.lastRefreshedAt ?? "").localeCompare(b.lastRefreshedAt ?? ""))
+      .slice(0, MAX_FB_PROBE);
+    for (const v of probeTargets) {
+      result.facebookCoversProbed++;
+      const { live } = await probeImageUrl(v.thumbnailUrl!);
+      if (!live) {
+        result.facebookDeadCovers++;
+        deadCovers.push(v);
+      }
+    }
+  }
+
+  // Unified candidate list: no-URL videos + dead-cover FB videos (no overlap —
+  // deadCovers all HAVE a thumbnailUrl, missing all lack one).
+  const candidates = [...missing, ...deadCovers];
+  for (const v of candidates) {
     result.byPlatform[v.platform] ??= { missing: 0, checked: 0, repaired: 0 };
     result.byPlatform[v.platform].missing++;
   }
-  if (missing.length === 0) return result;
+  result.missingAtStart = candidates.length;
+  if (candidates.length === 0) return result;
+  const deadCoverIds = new Set(deadCovers.map((v) => v.id));
 
   // SocialCrawl credit budget — never exceed the daily cap (YouTube API is free).
   const attempts = await store.listCollectionAttempts(1000);
@@ -112,7 +156,12 @@ export async function repairMissingThumbnails(
   };
 
   let processed = 0;
-  for (const v of missing) {
+  for (const v of candidates) {
+    const isDeadCover = deadCoverIds.has(v.id);
+    // Capture the pre-repair URL now — store.updateVideo may mutate this record
+    // object in place, so reading v.thumbnailUrl after the write would compare a
+    // value against itself (a dead-cover "changed" check must use the OLD URL).
+    const priorUrl = v.thumbnailUrl;
     const fail = (reason: string) => {
       result.failures.push({ videoId: v.id, platform: v.platform, slug: slugOf(v.originalUrl), reason });
     };
@@ -187,6 +236,28 @@ export async function repairMissingThumbnails(
       });
     }
 
+    // For a dead-cover FB video, the old URL was already present; a "replace"
+    // only counts as a repair if the NEW URL is actually a different, live cover.
+    // (A provider that echoes the same expired signed URL must not read as fixed.)
+    if (isDeadCover) {
+      const newUrl = ts.thumbnailUrl;
+      const changed = Boolean(newUrl) && newUrl !== priorUrl;
+      const nowLive = changed && isAllowedThumbHost(newUrl!) ? (await probeImageUrl(newUrl!)).live : false;
+      if (changed && nowLive) {
+        result.repaired++;
+        result.byPlatform[v.platform].repaired++;
+      } else {
+        fail(
+          !newUrl
+            ? "expired cover — provider returned no fresh cover (kept last-known URL; will retry next run)"
+            : !changed
+              ? "expired cover — provider returned the same expired URL (will retry next run)"
+              : "expired cover — replacement URL also failed the live probe (will retry next run)",
+        );
+      }
+      continue;
+    }
+
     if (ts.thumbnailUrl) {
       result.repaired++;
       result.byPlatform[v.platform].repaired++;
@@ -201,5 +272,8 @@ export async function repairMissingThumbnails(
 
 /** Build a one-line ET timestamp-free admin summary (no secrets). */
 export function summarizeRepair(r: ThumbnailRepairResult): string {
-  return `Checked ${r.checked} of ${r.missingAtStart} missing · repaired ${r.repaired} · ${r.stillMissing} still missing${r.creditCapReached ? " · credit cap reached" : ""}`;
+  const fb = r.facebookCoversProbed
+    ? ` · FB covers probed ${r.facebookCoversProbed} (${r.facebookDeadCovers} expired)`
+    : "";
+  return `Checked ${r.checked} of ${r.missingAtStart} candidates · repaired ${r.repaired} · ${r.stillMissing} still missing${fb}${r.creditCapReached ? " · credit cap reached" : ""}`;
 }

@@ -1,27 +1,38 @@
 "use client";
 
-// Phase 4 Videos command center — premium, read-only content performance view.
-// Server fetches range-aware rows once; this component handles the summary
-// strip, Growth Leaders, filtering/sorting, the card grid, and a read-only
-// detail drawer. No mutations — the public Videos page never edits data.
+// Phase 4 Videos command center — premium content performance view. Server
+// fetches range-aware rows once; this component handles the summary strip,
+// Growth Leaders, filtering/sorting, the card grid, and a detail drawer.
+//
+// PUBLIC view is read-only. When `isAdmin` is true (an authenticated admin
+// server-side session), and ONLY then, per-video Remove controls + a Removed
+// view render. Those are cosmetic gates: every remove/restore goes through the
+// PATCH /api/admin/videos/[id] route which enforces guardAdmin server-side, so a
+// forged request from a non-admin is rejected regardless of what renders. The
+// "Open video" external link is non-mutating and shows for everyone.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   ArrowDown,
   ArrowUp,
+  ExternalLink,
   Eye,
   Film,
   FilterX,
   Flame,
   Layers,
+  Loader2,
   MessagesSquare,
+  RotateCcw,
   Search,
   Sparkles,
+  Trash2,
   TrendingUp,
   X,
 } from "lucide-react";
-import type { VideoRowData } from "@/lib/queries";
+import type { RemovedVideoRow, VideoRowData } from "@/lib/queries";
 import type { Platform } from "@/lib/types";
 import { PLATFORMS, PLATFORM_LABELS } from "@/lib/types";
 import { formatCompact, formatDate, formatDelta, formatPct, truncate } from "@/lib/format";
@@ -225,9 +236,107 @@ function GrowthLeaderCard({ r, rank, onOpen }: { r: VideoRowData; rank: number; 
   );
 }
 
+// ── Admin controls (rendered only when isAdmin) ─────────────────────────────
+
+/** Shape threaded into cards/drawer when an admin is viewing. `null` for the
+ *  public view — every consumer renders nothing when it's absent. */
+type AdminControls = {
+  pendingId: string | null;
+  onRemove: (id: string) => void;
+};
+
+/**
+ * Remove/restore mutations against the server-enforced admin route. The route
+ * (guardAdmin) is the real gate; this hook just drives it + refreshes the RSC
+ * tree so the grid, totals, and Removed view update in place.
+ */
+function useTrackingActions() {
+  const router = useRouter();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const patch = useCallback(
+    async (id: string, body: Record<string, unknown>, label: string) => {
+      setPendingId(id);
+      setError(null);
+      try {
+        const res = await fetch(`/api/admin/videos/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(j?.error ?? `${label} failed (${res.status})`);
+        }
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : `${label} failed`);
+      } finally {
+        setPendingId(null);
+      }
+    },
+    [router],
+  );
+
+  const remove = useCallback(
+    (id: string) => {
+      const reason = window.prompt("Reason for removing this video from tracking? (required)");
+      if (reason === null) return; // cancelled
+      if (!reason.trim()) {
+        setError("A reason is required to remove a video from tracking.");
+        return;
+      }
+      void patch(id, { tracking: "exclude", reason: reason.trim() }, "Remove");
+    },
+    [patch],
+  );
+
+  const restore = useCallback((id: string) => void patch(id, { tracking: "restore" }, "Restore"), [patch]);
+
+  return { pendingId, error, remove, restore };
+}
+
+/** Non-mutating link to the original public post — shown for every viewer. */
+function OpenVideoLink({ url, className }: { url: string; className?: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className={clsx(
+        "inline-flex items-center gap-1 text-[10px] font-medium text-muted-strong transition-colors hover:text-accent",
+        className,
+      )}
+    >
+      <ExternalLink size={10} /> Open video
+    </a>
+  );
+}
+
+/** Admin-only destructive remove control. */
+function RemoveButton({ id, admin }: { id: string; admin: AdminControls }) {
+  const busy = admin.pendingId === id;
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        admin.onRemove(id);
+      }}
+      title="Remove this video from tracking (soft, reversible)"
+      className="inline-flex items-center gap-1 rounded-lg border border-negative/30 bg-[rgba(248,113,113,0.08)] px-2 py-1 text-[10px] font-semibold text-negative transition-colors hover:bg-[rgba(248,113,113,0.16)] disabled:opacity-50"
+    >
+      {busy ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />} Remove
+    </button>
+  );
+}
+
 // ── Main video card ────────────────────────────────────────────────────────
 
-function VideoCard({ r, now, onOpen }: { r: VideoRowData; now: number; onOpen: () => void }) {
+function VideoCard({ r, now, onOpen, admin }: { r: VideoRowData; now: number; onOpen: () => void; admin: AdminControls | null }) {
   const v = r.video;
   const title = v.title ?? v.caption ?? "Untitled video";
   return (
@@ -284,6 +393,11 @@ function VideoCard({ r, now, onOpen }: { r: VideoRowData; now: number; onOpen: (
         <Sparkline points={r.sparkline} color={PLATFORM_HEX[v.platform]} width={120} height={26} />
         <span className="text-[10px] text-muted-strong whitespace-nowrap">{formatDate(v.publishedAt)}</span>
       </div>
+
+      <div className="flex items-center justify-between gap-2 border-t border-border pt-2">
+        <OpenVideoLink url={v.originalUrl} />
+        {admin && <RemoveButton id={v.id} admin={admin} />}
+      </div>
     </Card>
   );
 }
@@ -299,7 +413,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function DetailDrawer({ r, now, onClose }: { r: VideoRowData; now: number; onClose: () => void }) {
+function DetailDrawer({ r, now, onClose, admin }: { r: VideoRowData; now: number; onClose: () => void; admin: AdminControls | null }) {
   const v = r.video;
   const title = v.title ?? v.caption ?? "Untitled video";
   const saves = r.latest?.saves ?? r.latest?.bookmarks ?? null;
@@ -358,6 +472,16 @@ function DetailDrawer({ r, now, onClose }: { r: VideoRowData; now: number; onClo
           <div className="flex flex-wrap gap-1.5">
             <StatusBadges r={r} now={now} />
           </div>
+
+          {admin && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-negative/25 bg-[rgba(248,113,113,0.05)] px-3 py-2.5">
+              <div>
+                <div className="text-[11px] font-semibold text-foreground">Admin controls</div>
+                <div className="text-[10px] text-muted-strong">Remove from tracking (soft, reversible)</div>
+              </div>
+              <RemoveButton id={v.id} admin={admin} />
+            </div>
+          )}
 
           <div className="rounded-xl border border-border bg-surface px-3 py-3">
             <div className="flex items-end justify-between gap-2">
@@ -421,14 +545,24 @@ export function VideosExplorer({
   rows,
   rangeLabel,
   episodes,
+  isAdmin = false,
+  removed = [],
 }: {
   rows: VideoRowData[];
   rangeLabel: string;
   episodes: Array<{ id: string; name: string }>;
+  /** True only for an authenticated admin session — gates the remove controls +
+   *  Removed view. The PATCH route enforces admin server-side regardless. */
+  isAdmin?: boolean;
+  /** Soft-removed videos (admin-only); empty for the public view. */
+  removed?: RemovedVideoRow[];
 }) {
   // Wall-clock "now" for the New (<48h) badge; relative-time is the point.
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
+  const { pendingId, error: adminError, remove, restore } = useTrackingActions();
+  // Only ever hand cards a live controls object when admin — never in public view.
+  const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove } : null;
   const [platform, setPlatform] = useState<Platform | "all">("all");
   const [episode, setEpisode] = useState<string>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -649,12 +783,99 @@ export function VideosExplorer({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {sorted.map((r) => (
-            <VideoCard key={r.video.id} r={r} now={now} onOpen={() => setOpenId(r.video.id)} />
+            <VideoCard key={r.video.id} r={r} now={now} onOpen={() => setOpenId(r.video.id)} admin={admin} />
           ))}
         </div>
       )}
 
-      {openRow && <DetailDrawer r={openRow} now={now} onClose={() => setOpenId(null)} />}
+      {/* Removed / excluded view — admin only. Public payload never contains it. */}
+      {isAdmin && removed.length > 0 && (
+        <RemovedSection removed={removed} pendingId={pendingId} onRestore={restore} />
+      )}
+
+      {/* Mutation error toast — admin only. */}
+      {isAdmin && adminError && (
+        <div
+          role="alert"
+          className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-lg border border-negative/40 bg-surface-raised px-4 py-2 text-xs font-medium text-negative shadow-xl"
+        >
+          {adminError}
+        </div>
+      )}
+
+      {openRow && <DetailDrawer r={openRow} now={now} onClose={() => setOpenId(null)} admin={admin} />}
     </div>
+  );
+}
+
+// ── Removed / excluded view (admin only) ────────────────────────────────────
+
+function RemovedSection({
+  removed,
+  pendingId,
+  onRestore,
+}: {
+  removed: RemovedVideoRow[];
+  pendingId: string | null;
+  onRestore: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="rounded-2xl border border-border bg-surface/60" aria-label="Removed videos">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+      >
+        <span className="flex items-center gap-2">
+          <Trash2 size={14} className="text-muted-strong" />
+          <span className="text-sm font-semibold">Removed from tracking</span>
+          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-strong tabular-nums">
+            {removed.length}
+          </span>
+        </span>
+        <span className="text-[11px] text-muted-strong">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-3">
+          <p className="mb-2.5 px-1 text-[11px] text-muted-strong">
+            These videos are excluded from every public total, chart, and refresh. Restoring returns
+            a video to tracking with its metrics and tags intact.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {removed.map((r) => {
+              const title = r.title ?? r.caption ?? "Untitled video";
+              const busy = pendingId === r.id;
+              return (
+                <li key={r.id} className="flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
+                  <VideoThumb src={r.thumbnailUrl} platform={r.platform} alt={title} className="h-14 w-10 shrink-0 rounded-lg opacity-70" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <PlatformBadge platform={r.platform} size="sm" />
+                      <span className="tabular-nums text-[10px] text-muted-strong">{formatCompact(r.views)} views</span>
+                    </div>
+                    <div className="mt-0.5 line-clamp-1 text-[13px] font-medium">{truncate(title, 80)}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-muted-strong">
+                      <OpenVideoLink url={r.originalUrl} />
+                      {r.removedReason && <span>· reason: {truncate(r.removedReason, 48)}</span>}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onRestore(r.id)}
+                    title="Restore this video to tracking"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] font-semibold text-foreground transition-colors hover:bg-surface-hover disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />} Restore
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }

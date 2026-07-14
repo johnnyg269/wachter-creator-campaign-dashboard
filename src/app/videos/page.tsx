@@ -1,15 +1,19 @@
 // Videos — the content performance command center for individual campaign
 // posts. Server component fetches range-aware rows once (period growth +
 // sparklines + audience signals); the explorer handles all interactivity.
-// Read-only: no mutation controls ever render here.
+// Public view is read-only. When (and only when) an authenticated admin loads
+// the page, per-video Remove controls + a Removed view are threaded in — the
+// mutation is still server-enforced by guardAdmin on the PATCH route, so the
+// isAdmin flag only decides what UI renders, never who may mutate.
 
 import { PageHeader } from "@/components/layout/page-header";
 import { AutoRefreshNote } from "@/components/ui/auto-refresh-note";
 import { RangeSwitcher } from "@/components/dashboard/range-switcher";
 import { CampaignSwitcher } from "@/components/dashboard/campaign-switcher";
 import { parsePublicCampaignFilter } from "@/lib/campaigns";
+import { isAdminAuthenticated } from "@/lib/auth";
 import { TimeAgo } from "@/components/ui/time-ago";
-import { getVideosPageData, type TimeRange } from "@/lib/queries";
+import { getRemovedVideosForAdmin, getVideosPageData, type TimeRange } from "@/lib/queries";
 import { VideosExplorer } from "./videos-explorer";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +30,12 @@ export default async function VideosPage({
   const sp = await searchParams;
   const range = parseRange(sp.range);
   const campaignFilter = parsePublicCampaignFilter(sp.campaign);
+  const isAdmin = await isAdminAuthenticated();
   const { rows, episodes, range: active, rangeLabel, platformCount, lastUpdatedAt, historyStart } =
     await getVideosPageData(range, campaignFilter);
+  // Removed (soft-excluded) videos are admin-only — the list is fetched only for
+  // an authenticated admin so it never enters the public page payload.
+  const removed = isAdmin ? await getRemovedVideosForAdmin() : [];
 
   const trackedCount = rows.filter((r) => !r.video.hidden).length;
   const subtitle = (
@@ -69,6 +77,8 @@ export default async function VideosPage({
         rows={rows}
         rangeLabel={rangeLabel}
         episodes={episodes.map((e) => ({ id: e.id, name: e.name }))}
+        isAdmin={isAdmin}
+        removed={removed}
       />
       {historyStart && trackedCount > 0 && (
         <p className="mt-4 px-1 text-[11px] text-muted-strong">

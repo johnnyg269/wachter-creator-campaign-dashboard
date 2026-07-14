@@ -7,7 +7,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getStore } from "@/lib/store";
 import { repairMissingThumbnails, summarizeRepair } from "@/lib/thumbnail-repair";
-import { isAdminOrCronBearer } from "../_utils";
+import { isAdminOrCronBearer, readJsonObject } from "../_utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -19,9 +19,14 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   try {
-    // Explicit admin action → force a detail retry even on covers the
-    // profile-retry loop previously marked "failed".
-    const result = await repairMissingThumbnails(getStore(), { force: true });
+    // Optional body: { verifyFacebook?: boolean, maxTotal?: number }. Defaults
+    // run the FULL safe fix — force a detail retry even on covers the profile
+    // loop marked "failed", AND server-probe stored fbcdn covers so silently
+    // EXPIRED ones (present URL, frozen "valid") get re-resolved too.
+    const body = (await readJsonObject(req)) ?? {};
+    const verifyFacebook = body.verifyFacebook !== false;
+    const maxTotal = typeof body.maxTotal === "number" && body.maxTotal > 0 ? Math.floor(body.maxTotal) : undefined;
+    const result = await repairMissingThumbnails(getStore(), { force: true, verifyFacebook, maxTotal });
     // Public pages are server-rendered on demand, but revalidate to be safe so
     // recovered covers show immediately on the next view.
     revalidatePath("/videos");

@@ -47,6 +47,23 @@ export function isTikTokCdnHost(url: string | null | undefined): boolean {
  * Browser-safe URL for a stored thumbnail: social-CDN images go through our
  * proxy; anything else (or invalid) is returned as-is / null.
  */
+/**
+ * Probe a stored CDN thumbnail URL with the EXACT same anonymous server fetch the
+ * /api/thumb proxy performs (ok + image content-type). `live:false` means the
+ * proxy would 404 and the UI would show the branded placeholder — i.e. the URL is
+ * expired/blocked/dead even though it is syntactically valid. Never throws.
+ */
+export async function probeImageUrl(url: string, timeoutMs = 7000): Promise<{ live: boolean; detail: string }> {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), cache: "no-store", headers: { Accept: "image/*" } });
+    const type = r.headers.get("content-type") ?? "";
+    if (r.ok && type.startsWith("image/")) return { live: true, detail: `ok ${type}` };
+    return { live: false, detail: `HTTP ${r.status}${type ? ` ${type}` : ""}` };
+  } catch {
+    return { live: false, detail: "fetch failed/timeout" };
+  }
+}
+
 export function thumbSrc(url: string | null | undefined): string | null {
   if (!url) return null;
   // TikTok CDN can't be proxied (Vercel server fetch is blocked) — load it

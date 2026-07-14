@@ -1139,6 +1139,21 @@ async function healExistingVideo(store: Store, existing: Video, n: NormalizedVid
   // it). Tracking is intentionally cleared here — this path deliberately un-excludes.
   const exRaw = existing.rawJson && typeof existing.rawJson === "object" ? (existing.rawJson as Record<string, unknown>) : {};
   if ("campaign" in exRaw) rawObj.campaign = exRaw.campaign;
+  // Route the thumbnail through the SAME state machine every other write uses so
+  // a heal can never overwrite a good/last-known-good cover with a null (provider
+  // returned none this heal) and never drops the thumb retry state — the previous
+  // code wrote `n.thumbnailUrl ?? existing.thumbnailUrl` + a raw object with no
+  // `thumb` key, silently losing status/attempts (Cause C of the FB thumb bug).
+  const prevThumb = readThumbState(existing.rawJson);
+  const nowIso = new Date().toISOString();
+  const ts = nextThumbnailState({
+    resolvedUrl: n.thumbnailUrl ?? null,
+    existingUrl: existing.thumbnailUrl,
+    prev: prevThumb,
+    isDiscovery: false,
+    now: nowIso,
+    verifiable: !isTikTokCdnHost(n.thumbnailUrl),
+  });
   return store.updateVideo(existing.id, {
     publishedAt: n.publishedAt ?? existing.publishedAt,
     hidden: false,
@@ -1147,8 +1162,8 @@ async function healExistingVideo(store: Store, existing: Video, n: NormalizedVid
     errorMessage: null,
     title: existing.title ?? n.title,
     caption: n.caption ?? existing.caption,
-    thumbnailUrl: n.thumbnailUrl ?? existing.thumbnailUrl,
-    rawJson: rawObj as Video["rawJson"],
+    thumbnailUrl: ts.thumbnailUrl,
+    rawJson: mergeThumbIntoRaw(rawObj, ts.thumb) as Video["rawJson"],
   });
 }
 
