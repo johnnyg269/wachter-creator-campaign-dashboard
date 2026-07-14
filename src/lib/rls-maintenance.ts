@@ -169,6 +169,68 @@ export async function auditRls(prisma: PrismaClient): Promise<RlsAudit> {
   };
 }
 
+// ── Anon access probe (real, in-database) ────────────────────────────────────
+
+export interface AnonProbeRow {
+  op: "SELECT" | "INSERT" | "UPDATE" | "DELETE";
+  denied: boolean;
+  detail: string;
+}
+
+function isPermissionError(msg: string): boolean {
+  return /permission denied|row-level security|must be owner|not allowed/i.test(msg);
+}
+
+/**
+ * Genuine anon access test: assume the PostgREST `anon` role inside a transaction
+ * that is ALWAYS rolled back, and attempt each CRUD op on `table`. This exercises
+ * the exact role an unauthenticated browser request runs as via the Supabase Data
+ * API — proving denial without needing the project's anon key. Never commits: the
+ * transaction is forced to roll back even in the (impossible-after-fix) case an op
+ * succeeds, so no data is ever mutated.
+ */
+export async function anonAccessProbe(prisma: PrismaClient, table: string): Promise<AnonProbeRow[]> {
+  const t = `"public".${quoteIdent(table)}`;
+  const ops: Array<{ op: AnonProbeRow["op"]; sql: string }> = [
+    { op: "SELECT", sql: `SELECT count(*) FROM ${t}` },
+    { op: "INSERT", sql: `INSERT INTO ${t} DEFAULT VALUES` },
+    { op: "UPDATE", sql: `UPDATE ${t} SET "id" = "id"` },
+    { op: "DELETE", sql: `DELETE FROM ${t}` },
+  ];
+  const ROLLBACK = "__rls_probe_rollback__";
+  const results: AnonProbeRow[] = [];
+  for (const { op, sql } of ops) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL ROLE anon`);
+        await tx.$executeRawUnsafe(sql);
+        throw new Error(ROLLBACK); // op did NOT error → permission allowed; undo it
+      });
+      results.push({ op, denied: false, detail: "unexpected: transaction committed" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes(ROLLBACK)) {
+        results.push({ op, denied: false, detail: "ALLOWED (rolled back — anon could perform this)" });
+      } else if (isPermissionError(msg)) {
+        results.push({ op, denied: true, detail: msg.split("\n")[0].slice(0, 160) });
+      } else {
+        // reached execution but failed for another reason → permission was NOT denied
+        results.push({ op, denied: false, detail: `not a permission block: ${msg.split("\n")[0].slice(0, 140)}` });
+      }
+    }
+  }
+  return results;
+}
+
+/** User-defined functions in `public` (PostgREST would expose these as RPC). */
+export async function publicFunctions(prisma: PrismaClient): Promise<string[]> {
+  const rows = await q(
+    prisma,
+    `SELECT p.proname AS n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace WHERE ns.nspname = 'public' ORDER BY p.proname`,
+  );
+  return rows.map((r) => String((r as Raw).n));
+}
+
 export interface RlsFixResult {
   before: RlsAudit;
   applied: boolean;

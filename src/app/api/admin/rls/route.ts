@@ -29,8 +29,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!isAdminOrCronBearer(req)) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!process.env.DATABASE_URL?.trim()) return noDb();
   try {
-    const { auditRls } = await import("@/lib/rls-maintenance");
-    return NextResponse.json({ ok: true, audit: await auditRls(await prisma()) });
+    const { auditRls, anonAccessProbe, publicFunctions } = await import("@/lib/rls-maintenance");
+    const p = await prisma();
+    const audit = await auditRls(p);
+    // ?anonTest=1[&table=Video] runs a real, rolled-back anon-role CRUD probe.
+    const url = new URL(req.url);
+    const wantAnon = url.searchParams.get("anonTest") === "1";
+    const probeTable = url.searchParams.get("table") ?? audit.tables[0]?.table ?? "Video";
+    const anonAccess = wantAnon ? await anonAccessProbe(p, probeTable) : null;
+    return NextResponse.json({
+      ok: true,
+      audit,
+      publicFunctions: await publicFunctions(p),
+      anonAccess: anonAccess ? { table: probeTable, results: anonAccess } : null,
+    });
   } catch (e) {
     return serverError(e, "RLS audit failed");
   }
