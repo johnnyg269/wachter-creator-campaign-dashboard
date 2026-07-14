@@ -172,7 +172,11 @@ async function auditPlatform(all: Video[], platform: Platform, unassignedId: str
   };
 }
 
-export async function auditPlatformThumbnails(store: Store = getStore(), now: Date = new Date()): Promise<PlatformThumbAudit> {
+export async function auditPlatformThumbnails(
+  store: Store = getStore(),
+  now: Date = new Date(),
+  opts: { debugTikTokUrl?: boolean } = {},
+): Promise<PlatformThumbAudit & { debugTikTokUrl?: string | null }> {
   const all = await store.listVideos({ includeHidden: true });
   const groups = await store.listEpisodeGroups();
   const unassignedId = groups.find((g) => g.name === UNASSIGNED_EPISODE_NAME)?.id ?? null;
@@ -180,6 +184,16 @@ export async function auditPlatformThumbnails(store: Store = getStore(), now: Da
   const byPlatform: PlatformThumbStats[] = [];
   for (const p of PLATFORMS) {
     byPlatform.push(await auditPlatform(all, p, unassignedId, startMs));
+  }
+  // Internal, admin-only render-test seam: one full TikTok cover URL so we can
+  // empirically test whether a format rewrite survives the CDN signature. Never
+  // surfaced publicly; the URL is an ephemeral signed CDN link, not a secret.
+  let debugTikTokUrl: string | null | undefined = undefined;
+  if (opts.debugTikTokUrl) {
+    const tt = all.find(
+      (v) => v.platform === "tiktok" && !v.hidden && !isAdminExcluded(v) && v.thumbnailUrl && /\.heic/i.test(v.thumbnailUrl),
+    );
+    debugTikTokUrl = tt?.thumbnailUrl ?? null;
   }
   const tt = byPlatform.find((p) => p.platform === "tiktok");
   const ttHeic = tt ? (tt.extBreakdown["heic"] ?? 0) + (tt.extBreakdown["heif"] ?? 0) : 0;
