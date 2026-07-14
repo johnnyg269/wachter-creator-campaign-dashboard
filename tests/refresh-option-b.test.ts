@@ -108,6 +108,11 @@ describe("Option B refresh wiring (cron, real pipeline)", () => {
     SOCIALCRAWL_DAILY_CREDIT_CAP: "350",
     REFRESH_QUIET_HOURS_ENABLED: "false",
     COMMENT_DETAIL_PULL_1_ET: "0", // a comment window is always open → comments on
+    // Pin the ORIGINAL Option B cadences: this suite tests the tier WIRING (due
+    // vs not-due, per-post lane, exclusions), not the scaled-back defaults.
+    HOT_REFRESH_INTERVAL_MINUTES: "15",
+    WARM_REFRESH_INTERVAL_MINUTES: "30",
+    BOOTCAMP_REFRESH_INTERVAL_HOURS: "24",
   } as const;
 
   beforeEach(async () => {

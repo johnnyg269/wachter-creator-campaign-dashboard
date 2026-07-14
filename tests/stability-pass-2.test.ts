@@ -30,11 +30,11 @@ describe("scheduled refresh runs every tick despite seconds-jitter", () => {
   const fullRun = (started: Date): RefreshRun =>
     ({ id: "r", startedAt: started.toISOString(), finishedAt: started.toISOString(), status: "success", trigger: "cron", platformsAttempted: [], videosUpdated: 0, commentsUpdated: 0, newVideosDiscovered: 0, errors: [], rawLog: ["mode:full discovery:off comments:off"] } as unknown as RefreshRun);
 
-  it("a tick 14m57s after the last start still runs (within the 2-min grace)", () => {
+  it("a tick 29m57s after the last start still runs (within the 2-min grace)", () => {
     const cfg = getRefreshPolicyConfig();
-    expect(cfg.fullIntervalMin).toBe(15);
-    // last full started 12:00:06; this cron tick fires 12:15:03 → 14m57s elapsed.
-    const d = decideScheduledRefresh({ now: at(12, 15, 3), recentRuns: [fullRun(at(12, 0, 6))], todaysActorRuns: 0, cfg });
+    expect(cfg.fullIntervalMin).toBe(30);
+    // last full started 12:00:06; this cron tick fires 12:30:03 → 29m57s elapsed.
+    const d = decideScheduledRefresh({ now: at(12, 30, 3), recentRuns: [fullRun(at(12, 0, 6))], todaysActorRuns: 0, cfg });
     expect(d.action).toBe("run"); // would have been "skip not_due" under the strict >= 15 rule
   });
 

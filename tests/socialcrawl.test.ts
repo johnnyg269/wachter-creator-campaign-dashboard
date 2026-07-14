@@ -245,10 +245,14 @@ describe("approved schedule", () => {
     expect(isQuietHours(at(23), cfg)).toBe(false); // 11 PM ET — active
   });
 
-  it("metrics interval defaults to 15 min when SocialCrawl is enabled", () => {
+  it("metrics interval defaults to 30 min when SocialCrawl is enabled (floored at 30)", () => {
     process.env.SOCIALCRAWL_API_KEY = "sc_test";
     process.env.SOCIALCRAWL_METRICS_ENABLED = "true";
-    expect(getRefreshPolicyConfig().fullIntervalMin).toBe(15);
+    expect(getRefreshPolicyConfig().fullIntervalMin).toBe(30);
+    // Even an explicit faster env is floored — sweeps must not exceed 30-min cadence.
+    process.env.METRICS_REFRESH_INTERVAL_MINUTES = "15";
+    expect(getRefreshPolicyConfig().fullIntervalMin).toBe(30);
+    delete process.env.METRICS_REFRESH_INTERVAL_MINUTES;
   });
 
   it("no scheduled refresh during quiet hours", () => {
@@ -260,15 +264,15 @@ describe("approved schedule", () => {
     expect(d).toMatchObject({ kind: "quiet" });
   });
 
-  it("runs every 15 min during active hours", () => {
+  it("runs every 30 min during active hours (scaled back)", () => {
     process.env.SOCIALCRAWL_API_KEY = "sc_test";
     process.env.SOCIALCRAWL_METRICS_ENABLED = "true";
     const cfg = getRefreshPolicyConfig();
     const runs: RefreshRun[] = [
-      { id: "r", startedAt: new Date(at(12).getTime() - 16 * 60_000).toISOString(), finishedAt: null, status: "success", trigger: "cron", platformsAttempted: [], videosUpdated: 0, commentsUpdated: 0, newVideosDiscovered: 0, errors: [], rawLog: ["mode:full discovery:off comments:off"] } as unknown as RefreshRun,
+      { id: "r", startedAt: new Date(at(12).getTime() - 31 * 60_000).toISOString(), finishedAt: null, status: "success", trigger: "cron", platformsAttempted: [], videosUpdated: 0, commentsUpdated: 0, newVideosDiscovered: 0, errors: [], rawLog: ["mode:full discovery:off comments:off"] } as unknown as RefreshRun,
     ];
     const d = decideScheduledRefresh({ now: at(12), recentRuns: runs, todaysActorRuns: 0, cfg });
-    expect(d.action).toBe("run"); // 16 min since last full ≥ 15-min interval
+    expect(d.action).toBe("run"); // 31 min since last full ≥ 30-min interval
   });
 
   it("comment detail is due twice per active day (12:00 + 18:00 windows)", () => {
@@ -293,13 +297,22 @@ describe("approved schedule", () => {
 // ── Daily credit cap ──────────────────────────────────────────────────────────
 describe("SocialCrawl daily credit cap", () => {
   const at = (etHour: number) => new Date(Date.UTC(2026, 5, 16, etHour + 4, 0, 0));
-  it("stops noncritical refreshes when the credit cap is reached", () => {
+  it("cap reached + nothing due → skip; cap reached + comment window due → RUNS the comment lane", () => {
     process.env.SOCIALCRAWL_API_KEY = "sc_test";
     process.env.SOCIALCRAWL_METRICS_ENABLED = "true";
     process.env.SOCIALCRAWL_DAILY_CREDIT_CAP = "300";
     const cfg = getRefreshPolicyConfig();
-    const d = decideScheduledRefresh({ now: at(12), recentRuns: [], todaysActorRuns: 0, todaysSocialcrawlCredits: 300, cfg });
-    expect(d).toMatchObject({ action: "skip", kind: "budget" });
+    // Discovery ran recently + before the first comment window → nothing due → skip.
+    const recentDiscovery = [
+      { id: "d", startedAt: new Date(at(10).getTime() - 30 * 60_000).toISOString(), finishedAt: null, status: "success", trigger: "cron", platformsAttempted: [], videosUpdated: 0, commentsUpdated: 0, newVideosDiscovered: 0, errors: [], rawLog: ["mode:full discovery:on comments:off"] } as unknown as RefreshRun,
+    ];
+    const skip = decideScheduledRefresh({ now: at(10), recentRuns: recentDiscovery, todaysActorRuns: 0, todaysSocialcrawlCredits: 300, cfg });
+    expect(skip).toMatchObject({ action: "skip", kind: "budget" });
+    // At noon the comment window is due: the run MUST fire (YouTube comments are
+    // free; SocialCrawl lanes clamp to 0) — the July incident regression guard.
+    const run = decideScheduledRefresh({ now: at(12), recentRuns: recentDiscovery, todaysActorRuns: 0, todaysSocialcrawlCredits: 300, cfg });
+    expect(run.action).toBe("run");
+    if (run.action === "run") expect(run.mode.comments).toBe(true);
   });
   it("credit counter parses the attempt log (cache hits = call, 0 extra credit handled)", () => {
     const tz = "America/New_York";

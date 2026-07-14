@@ -56,6 +56,25 @@ describe("computeCommentHealth", () => {
     expect(h.eligibility.skipReasons.excluded_removed).toBeGreaterThanOrEqual(1);
   });
 
+  it("staleness: fresh <24h → ok; >24h → warning; >72h (or never) → critical, with a reason", async () => {
+    const store = getStore();
+    const c = await ensureSeedData(store);
+    const v = await ins(store, c.id, {});
+    const mk = (capturedAt: string) =>
+      store.upsertComment({ videoId: v.id, platform: "tiktok", externalCommentId: `c-${capturedAt}`, authorName: "a", text: "hi", postedAt: null, likes: 0, replyCount: 0, sentiment: null, needsResponse: false, tags: [], permalink: null, capturedAt, rawJson: null });
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    // never pulled → critical
+    expect((await computeCommentHealth(store, now)).staleness.level).toBe("critical");
+    await mk("2026-07-10T12:00:00.000Z"); // 96h ago → still critical
+    expect((await computeCommentHealth(store, now)).staleness.level).toBe("critical");
+    await mk("2026-07-13T00:00:00.000Z"); // 36h ago → warning
+    const warn = await computeCommentHealth(store, now);
+    expect(warn.staleness.level).toBe("warning");
+    expect(warn.staleness.reason).not.toBe("fresh");
+    await mk("2026-07-14T06:00:00.000Z"); // 6h ago → ok (public totals untouched by warnings)
+    expect((await computeCommentHealth(store, now)).staleness.level).toBe("ok");
+  });
+
   it("flags capReached + explains TT/IG/FB starvation when the daily cap is consumed", async () => {
     const store = getStore();
     const c = await ensureSeedData(store);

@@ -73,21 +73,29 @@ async function apifyAllowedNow(store: Store): Promise<boolean> {
 
 /** A crashed refresh's lock expires after this — nothing blocks forever. */
 export const REFRESH_LOCK_TTL_MS = 10 * 60 * 1000;
-/** SocialCrawl credits held back from the per-cycle comment budget so the
- *  metrics sweep + FB detail in the SAME run never tip over the daily cap. */
-const COMMENT_CREDIT_RESERVE = 20;
-/** SocialCrawl credits held back from the per-post DUE lane (Option B): leaves
- *  headroom under the daily cap for the next tick's sweep + the comment cycle. */
+// ── SocialCrawl daily budget lanes (July credit-contention incident) ─────────
+// The 350-credit cap is partitioned so METRICS can never starve the other lanes:
+//   metrics (sweeps + per-post)  ≤ metricsDailyBudget (default 225)
+//   comments                      ≥ 75 (whatever remains above metrics, minus spare)
+//   discovery                     ≥ 25 (sweeps may run past the metrics budget on
+//                                  discovery cycles, up to +DISCOVERY_RESERVE)
+//   emergency headroom            ≥ 25 (never scheduled — admin/manual only)
+/** Credits under the cap that scheduled work NEVER touches (emergency headroom). */
+const HEADROOM_RESERVE = 25;
+/** Extra credits (beyond the metrics budget) a DISCOVERY cycle's sweeps may use. */
+const DISCOVERY_RESERVE = 25;
+/** comments (75) + discovery (25) + headroom (25) — the non-metrics share of the
+ *  cap. When an admin raises the cap for a day, metrics may use cap − this. */
+const NON_METRICS_RESERVE = 125;
+/** SocialCrawl credits held back from the per-post DUE lane within a single run
+ *  (in-run safety margin so a cycle never tips over the lane budget mid-run). */
 const PERPOST_CREDIT_RESERVE = 30;
-/** Additional daily headroom the metrics per-post lane leaves for the twice-daily
- *  comment windows, so a heavy metrics day (e.g. the 151-video Bootcamp daily
- *  batch) can't consume the whole cap and starve TikTok/Instagram/Facebook comment
- *  TEXT. Preserves the cap (total ≤ cap); tunable via env. */
-const COMMENT_DAILY_RESERVE = (() => {
-  const raw = process.env.COMMENT_DAILY_RESERVE;
-  const n = raw === undefined ? NaN : Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 30;
-})();
+/** Effective metrics budget: the configured daily metrics budget, or — when an
+ *  admin temporarily raised the cap — everything above the reserved lanes.
+ *  Exported for tests (budget-lane regression guards). */
+export function metricsBudgetFor(effectiveCreditCap: number, cfgBudget: number): number {
+  return Math.max(cfgBudget, effectiveCreditCap - NON_METRICS_RESERVE);
+}
 /** Max per-post DUE fetches per platform per cycle — spreads the Bootcamp daily
  *  batch over several ticks and bounds run time well under maxDuration. */
 const MAX_PERPOST_PER_CYCLE = 15;
@@ -533,14 +541,36 @@ async function refreshPlatform(
       // per platform from persisted attempts, so earlier platforms in this run
       // count. Only meaningful for the SocialCrawl provider (YouTube is free).
       let commentBudget: number | undefined;
-      if (mode.comments && provider.providerType === "socialcrawl") {
+      if (provider.providerType === "socialcrawl") {
         const rcfg = getRefreshPolicyConfig();
         const usedToday = socialcrawlCreditsToday(
           await store.listCollectionAttempts(1000),
           new Date(),
           rcfg.quietTimezone,
         ).credits;
-        commentBudget = Math.max(0, effectiveCreditCap - usedToday - COMMENT_CREDIT_RESERVE);
+        // Comment lane: everything above today's spend minus the emergency
+        // headroom. Because metrics stop at metricsDailyBudget (below + per-post
+        // lane), at least cap − metricsBudget − headroom (default 100) credits are
+        // available to the comment windows regardless of how heavy metrics were.
+        if (mode.comments) {
+          commentBudget = Math.max(0, effectiveCreditCap - usedToday - HEADROOM_RESERVE);
+        }
+        // Metrics-budget gate for the SWEEP itself: a pure-metrics run past the
+        // metrics budget spends nothing; discovery cycles may run sweeps up to
+        // +DISCOVERY_RESERVE; a comment cycle proceeds only while it has budget.
+        // (Distinct reasons: metricsBudgetReached vs globalCapReached.)
+        const metricsBudget = metricsBudgetFor(effectiveCreditCap, rcfg.metricsDailyBudget);
+        const discoveryRoom = mode.discovery && usedToday < metricsBudget + DISCOVERY_RESERVE;
+        const commentRoom = mode.comments && (commentBudget ?? 0) > 0;
+        if (usedToday >= metricsBudget && !discoveryRoom && !commentRoom) {
+          out.status = "skipped";
+          out.reason =
+            usedToday >= effectiveCreditCap
+              ? `globalCapReached (${usedToday}/${effectiveCreditCap}) — SocialCrawl sweep skipped; last-known-good preserved`
+              : `metricsBudgetReached (${usedToday}/${metricsBudget}) — SocialCrawl sweep skipped; comment/discovery lanes unaffected`;
+          log.push(`${platform}: ${out.reason}`);
+          return out;
+        }
       }
       // Option B (Part 10): comment/detail (text + per-post engagement) pulls are
       // limited to the hot-MTL subset — Bootcamp + cold/warm are off by default
@@ -850,10 +880,23 @@ async function refreshPlatform(
           nowPP,
           rcfg.quietTimezone,
         ).credits;
-        // Reserve headroom for BOTH the next sweep AND the comment windows, so the
-        // heavy Bootcamp daily metrics batch can't consume the whole cap and starve
-        // TikTok/Instagram/Facebook comment text (the incident that stopped comments).
-        headroom = Math.max(0, effectiveCreditCap - usedToday - PERPOST_CREDIT_RESERVE - COMMENT_DAILY_RESERVE);
+        // Per-post metrics live inside the METRICS budget lane: stop at
+        // metricsDailyBudget (default 225) so comments (≥75) + discovery (≥25) +
+        // headroom (≥25) always keep their share of the cap. The in-run reserve
+        // keeps a single cycle from tipping over the lane mid-run.
+        const metricsBudget = metricsBudgetFor(effectiveCreditCap, rcfg.metricsDailyBudget);
+        const metricsRoom = Math.max(0, metricsBudget - usedToday);
+        const globalRoom = Math.max(0, effectiveCreditCap - usedToday - PERPOST_CREDIT_RESERVE);
+        headroom = Math.min(metricsRoom, globalRoom);
+        if (headroom === 0) {
+          log.push(
+            `${platform}: per-post metrics skipped — ${
+              metricsRoom === 0
+                ? `metricsBudgetReached (${usedToday}/${metricsBudget})`
+                : `globalCapReached (${usedToday}/${effectiveCreditCap})`
+            }; last-known-good preserved`,
+          );
+        }
       }
       const limit = Math.min(due.length, MAX_PERPOST_PER_CYCLE, isSc ? headroom : Infinity);
       let processed = 0;

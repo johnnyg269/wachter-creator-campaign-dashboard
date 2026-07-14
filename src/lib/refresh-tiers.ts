@@ -44,11 +44,18 @@ function envBool(name: string, fallback: boolean): boolean {
 }
 
 export function getRefreshTierConfig(): RefreshTierConfig {
+  // Scaled-back defaults (July credit-contention incident): with 113 MTL + 151
+  // Bootcamp videos, the old 15min/30min/24h cadences consumed the whole 350
+  // SocialCrawl cap by mid-morning, starving comment pulls + discovery.
+  //   hot MTL   15min → 30min
+  //   warm MTL  30min → 12h
+  //   Bootcamp  24h   → 72h per video (the per-post lane's stalest-first order +
+  //   per-cycle limit turns this into a rolling ~50-video/day shard)
   return {
     hotVideoAgeDays: envInt("HOT_VIDEO_AGE_DAYS", 7),
-    hotIntervalMin: envInt("HOT_REFRESH_INTERVAL_MINUTES", 15),
-    warmIntervalMin: envInt("WARM_REFRESH_INTERVAL_MINUTES", 30),
-    bootcampIntervalHours: envInt("BOOTCAMP_REFRESH_INTERVAL_HOURS", 24),
+    hotIntervalMin: envInt("HOT_REFRESH_INTERVAL_MINUTES", 30),
+    warmIntervalMin: envInt("WARM_REFRESH_INTERVAL_MINUTES", 720),
+    bootcampIntervalHours: envInt("BOOTCAMP_REFRESH_INTERVAL_HOURS", 72),
     bootcampCommentDetail: envBool("BOOTCAMP_COMMENT_DETAIL_ENABLED", false),
     coldCommentDetail: envBool("COLD_COMMENT_DETAIL_ENABLED", false),
   };

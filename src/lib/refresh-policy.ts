@@ -42,6 +42,11 @@ export interface RefreshPolicyConfig {
   socialcrawlEnabled: boolean;
   /** Daily SocialCrawl credit cap — scheduled refreshes stop when reached. */
   socialcrawlDailyCreditCap: number;
+  /** Daily SocialCrawl credits METRICS may consume (sweeps + per-post lane). The
+   * rest of the cap is reserved for comments (≥75), discovery (≥25), and
+   * emergency headroom (≥25) so heavy metrics days can never starve them.
+   * 350-cap default split: 225 metrics / 75 comments / 25 discovery / 25 spare. */
+  metricsDailyBudget: number;
   quietHoursEnabled: boolean;
   quietTimezone: string;
   /** Local hour the quiet window starts (inclusive), 0–23. */
@@ -86,9 +91,13 @@ export function getRefreshPolicyConfig(): RefreshPolicyConfig {
   return {
     // METRICS_REFRESH_INTERVAL_MINUTES (new) > REFRESH_FULL_INTERVAL_MINUTES
     // (legacy) > default (15 on SocialCrawl, 60 on Apify).
-    fullIntervalMin: envInt(
-      "METRICS_REFRESH_INTERVAL_MINUTES",
-      envInt("REFRESH_FULL_INTERVAL_MINUTES", scOn ? 15 : 60),
+    // Scaled back (July credit-contention): SocialCrawl sweeps now run at most
+    // every 30 min — the old 15-min cadence, with 264 tracked videos, consumed
+    // the whole daily cap by mid-morning and starved comments + discovery. The
+    // floor applies only in the SocialCrawl regime; env can still slow it further.
+    fullIntervalMin: Math.max(
+      scOn ? 30 : 1,
+      envInt("METRICS_REFRESH_INTERVAL_MINUTES", envInt("REFRESH_FULL_INTERVAL_MINUTES", scOn ? 30 : 60)),
     ),
     lightIntervalMin: envInt("REFRESH_LIGHT_INTERVAL_MINUTES", 30),
     // Discovery (finding NEW campaign posts) runs every DISCOVERY_REFRESH_INTERVAL_HOURS
@@ -116,6 +125,7 @@ export function getRefreshPolicyConfig(): RefreshPolicyConfig {
     hardCapUsd: envFloat("APIFY_DAILY_HARD_CAP_USD", 3),
     estCostPerRunUsd: envFloat("APIFY_EST_COST_PER_RUN_USD", 0.02),
     socialcrawlEnabled: scOn,
+    metricsDailyBudget: envInt("SC_METRICS_DAILY_BUDGET", 225),
     socialcrawlDailyCreditCap: getSocialcrawlDailyCreditCap(),
     quietHoursEnabled: envBool("REFRESH_QUIET_HOURS_ENABLED", true),
     quietTimezone:
@@ -276,6 +286,27 @@ export function decideScheduledRefresh(args: {
   if (cfg.socialcrawlEnabled) {
     const credits = args.todaysSocialcrawlCredits ?? 0;
     if (credits >= cfg.socialcrawlDailyCreditCap) {
+      // Cap reached: SocialCrawl METRICS must stop — but a due comment window or
+      // discovery cycle still RUNS. The YouTube lane is FREE (Data API), and the
+      // in-run SocialCrawl lane budgets clamp themselves to zero, so this spends
+      // no SC credits. (The old unconditional skip here starved YouTube comments
+      // + discovery for days whenever metrics were heavy — the July incident.)
+      const commentsDue = isCommentDetailDue(args.recentRuns, now, cfg);
+      const discoveryDue =
+        cfg.enableDiscovery &&
+        minutesSince(lastSuccessfulWhere(args.recentRuns, (m) => m.discovery), now) >= cfg.discoveryIntervalMin;
+      if (commentsDue || discoveryDue) {
+        return {
+          action: "run",
+          mode: { light: false, discovery: discoveryDue, comments: commentsDue },
+          reason: `SocialCrawl cap reached (${credits}/${cfg.socialcrawlDailyCreditCap}) — running ${[
+            discoveryDue ? "discovery" : null,
+            commentsDue ? "comment" : null,
+          ]
+            .filter(Boolean)
+            .join(" + ")} lane(s) only (YouTube is free; SC lanes clamp to 0)`,
+        };
+      }
       return {
         action: "skip",
         kind: "budget",

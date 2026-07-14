@@ -256,11 +256,33 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
       if (id) ids.add(id);
     }
     if (profile) {
+      // Discovery failure must not block metrics for known videos — but it MUST be
+      // logged: a silent failure here once left YouTube Shorts discovery dead for
+      // weeks with zero admin visibility (no attempt row, no error anywhere).
       try {
         const discovered = await this.discoverNewVideos(profile, since);
         for (const d of discovered) if (d.externalVideoId) ids.add(d.externalVideoId);
-      } catch {
-        // Discovery failure shouldn't block metrics for known videos.
+        result.attempts.push({
+          provider: "youtube_api",
+          actorId: null,
+          kind: "discovery",
+          inputDescription: "playlistItems uploads sweep",
+          success: true,
+          runId: null,
+          itemCount: discovered.length,
+          error: null,
+        });
+      } catch (e) {
+        result.attempts.push({
+          provider: "youtube_api",
+          actorId: null,
+          kind: "discovery",
+          inputDescription: "playlistItems uploads sweep",
+          success: false,
+          runId: null,
+          itemCount: 0,
+          error: e instanceof Error ? e.message.slice(0, 300) : String(e),
+        });
       }
     }
     try {

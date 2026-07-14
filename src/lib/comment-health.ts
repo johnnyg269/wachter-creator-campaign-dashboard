@@ -17,9 +17,12 @@ import type { Platform } from "./types";
 
 const PLATFORMS: Platform[] = ["tiktok", "instagram", "facebook", "youtube"];
 const DAY = 86_400_000;
-/** Kept in sync with COMMENT_CREDIT_RESERVE in refresh.ts (the comment lane holds
- *  this back so a comment cycle never overshoots the daily cap). */
-const COMMENT_CREDIT_RESERVE = 20;
+/** Kept in sync with HEADROOM_RESERVE in refresh.ts (the comment lane spends
+ *  everything above today's use minus this emergency headroom). */
+const COMMENT_CREDIT_RESERVE = 25;
+/** Stale thresholds for the admin warnings (hours). */
+const STALE_WARNING_H = 24;
+const STALE_CRITICAL_H = 72;
 
 export interface CommentHealth {
   generatedAt: string;
@@ -62,6 +65,15 @@ export interface CommentHealth {
      *  text right now. 0 ⇒ TT/IG/FB comment text skipped this cycle (cap reached). */
     commentBudgetNow: number;
     capReached: boolean;
+  };
+  /** Admin stale-data warning: TikTok/Instagram/Facebook comment recency. */
+  staleness: {
+    /** Newest TT/IG/FB comment capturedAt (YouTube excluded — it has its own lane). */
+    socialLastPullIso: string | null;
+    hoursSince: number | null;
+    level: "ok" | "warning" | "critical";
+    /** Best-effort cause: cap | eligibility | scheduler_or_unknown. */
+    reason: string;
   };
   /** Plain-English explanation for the admin panel. */
   explanation: string;
@@ -179,6 +191,18 @@ export async function computeCommentHealth(store: Store = getStore(), now: Date 
       youtubeApiEnabled: getYouTubeApiKey() !== null,
     },
     credits: { activeCap, usedToday, commentBudgetNow, capReached },
+    staleness: (() => {
+      const social = [latestByPlatform.tiktok, latestByPlatform.instagram, latestByPlatform.facebook]
+        .filter((x): x is string => x !== null)
+        .sort()
+        .pop() ?? null;
+      const hoursSince = social ? (nowMs - new Date(social).getTime()) / 3_600_000 : null;
+      const level: "ok" | "warning" | "critical" =
+        hoursSince === null || hoursSince > STALE_CRITICAL_H ? "critical" : hoursSince > STALE_WARNING_H ? "warning" : "ok";
+      const reason =
+        level === "ok" ? "fresh" : capReached ? "cap" : eligibleForComments === 0 ? "eligibility" : "scheduler_or_unknown";
+      return { socialLastPullIso: social, hoursSince, level, reason };
+    })(),
     explanation,
   };
 }

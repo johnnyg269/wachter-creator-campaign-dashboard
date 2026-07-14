@@ -25,6 +25,7 @@ const read = (p: string) => readFileSync(path.join(REPO_ROOT, p), "utf-8");
 
 const CFG: RefreshPolicyConfig = {
   fullIntervalMin: 60,
+  metricsDailyBudget: 225,
   lightIntervalMin: 30,
   discoveryIntervalMin: 720,
   discoveryLookbackHours: 72,

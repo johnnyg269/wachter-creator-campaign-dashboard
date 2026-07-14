@@ -147,14 +147,14 @@ describe("getRefreshTierConfig — env defaults", () => {
   const RESTORE = ["HOT_VIDEO_AGE_DAYS", "HOT_REFRESH_INTERVAL_MINUTES", "WARM_REFRESH_INTERVAL_MINUTES", "BOOTCAMP_REFRESH_INTERVAL_HOURS", "BOOTCAMP_COMMENT_DETAIL_ENABLED", "COLD_COMMENT_DETAIL_ENABLED"];
   let restore: () => void;
   afterEach(() => restore?.());
-  it("defaults to 7d / 15m / 30m / 24h and comments off", () => {
+  it("defaults to 7d / 30m hot / 12h warm / 72h bootcamp and comments off (scaled back)", () => {
     restore = stashEnv(RESTORE);
     const cfg = getRefreshTierConfig();
     expect(cfg).toMatchObject({
       hotVideoAgeDays: 7,
-      hotIntervalMin: 15,
-      warmIntervalMin: 30,
-      bootcampIntervalHours: 24,
+      hotIntervalMin: 30,
+      warmIntervalMin: 720,
+      bootcampIntervalHours: 72,
       bootcampCommentDetail: false,
       coldCommentDetail: false,
     });
