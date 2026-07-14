@@ -50,6 +50,13 @@ function prismaClient(): PrismaClient {
   return g.__prisma;
 }
 
+/** The app's shared Prisma client — the SAME connection every server route uses.
+ *  Exposed for read-only DB introspection + one-off maintenance (e.g. enabling
+ *  RLS) so those run through the exact role the app connects as. */
+export function getPrismaClient(): PrismaClient {
+  return prismaClient();
+}
+
 // ── Date / JSON boundary helpers ─────────────────────────────────────────────
 
 function iso(d: Date): string {
