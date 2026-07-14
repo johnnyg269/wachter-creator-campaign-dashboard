@@ -15,8 +15,7 @@ export const maxDuration = 120;
 export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!isAdminOrCronBearer(req)) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   try {
-    const debugTikTokUrl = new URL(req.url).searchParams.get("full") === "1";
-    return NextResponse.json({ ok: true, audit: await auditPlatformThumbnails(getStore(), new Date(), { debugTikTokUrl }) });
+    return NextResponse.json({ ok: true, audit: await auditPlatformThumbnails(getStore(), new Date()) });
   } catch (e) {
     return serverError(e, "Platform thumbnail audit failed");
   }

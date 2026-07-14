@@ -44,8 +44,11 @@ export function isTikTokCdnHost(url: string | null | undefined): boolean {
 }
 
 /**
- * Browser-safe URL for a stored thumbnail: social-CDN images go through our
- * proxy; anything else (or invalid) is returned as-is / null.
+ * Browser-safe URL for a stored thumbnail. ALL allow-listed social CDNs —
+ * including TikTok, whose signed covers are HEIC — go through /api/thumb: the
+ * server can fetch them (browsers can't hotlink), and the proxy transcodes HEIC
+ * to JPEG so it renders (a browser <img> cannot decode HEIC). Anything else (or
+ * invalid) is returned as-is / null.
  */
 /**
  * Probe a stored CDN thumbnail URL with the EXACT same anonymous server fetch the
@@ -66,11 +69,9 @@ export async function probeImageUrl(url: string, timeoutMs = 7000): Promise<{ li
 
 export function thumbSrc(url: string | null | undefined): string | null {
   if (!url) return null;
-  // TikTok CDN can't be proxied (Vercel server fetch is blocked) — load it
-  // directly in the browser; the UI handles failure via onError.
-  if (isTikTokCdnHost(url)) {
-    return url.startsWith("https://") ? url : null;
-  }
+  // Every allow-listed social CDN — TikTok included — goes through /api/thumb:
+  // the server can fetch them and the proxy transcodes TikTok's HEIC covers to
+  // JPEG so the browser can actually render them.
   if (isAllowedThumbHost(url)) {
     return `/api/thumb?src=${encodeURIComponent(url)}`;
   }

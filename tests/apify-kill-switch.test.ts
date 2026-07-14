@@ -272,9 +272,11 @@ describe("TikTok CDN thumbnails are rendered directly, not proxied", () => {
     expect(isTikTokCdnHost(null)).toBe(false);
   });
 
-  it("thumbSrc returns the raw https URL for TikTok (browser loads it), proxies IG/FB", () => {
+  it("thumbSrc proxies TikTok (HEIC → JPEG transcode) and IG/FB through /api/thumb", () => {
     const tt = "https://p16.tiktokcdn-us.com/cover.heic";
-    expect(thumbSrc(tt)).toBe(tt); // NOT /api/thumb — TikTok blocks server fetch
+    // TikTok now goes through the proxy: the server CAN fetch it and the proxy
+    // transcodes its HEIC covers to browser-renderable JPEG.
+    expect(thumbSrc(tt)).toBe(`/api/thumb?src=${encodeURIComponent(tt)}`);
     expect(thumbSrc("https://scontent.cdninstagram.com/x.jpg")).toMatch(/^\/api\/thumb\?src=/);
     expect(thumbSrc(null)).toBeNull();
   });

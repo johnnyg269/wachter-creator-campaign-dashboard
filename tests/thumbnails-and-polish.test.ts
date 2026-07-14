@@ -138,15 +138,19 @@ describe("TikTok thumbnail last-known-good (integration)", () => {
 
 // ── Source-level: HEIC proxy transcode + visual polish ────────────────────────
 describe("thumbnail proxy", () => {
-  // TikTok's signed CDN blocks datacenter fetches, so server-side transcode is
-  // not viable — we don't depend on sharp. HEIC covers are stored and rendered
-  // directly by the browser (valid_unverified), with a placeholder fallback.
-  it("does not depend on sharp / HEIC transcode", () => {
-    expect(read("src/app/api/thumb/route.ts")).not.toContain("sharp");
-    expect(read("package.json")).not.toMatch(/"sharp"\s*:/);
-    expect(read("next.config.ts")).not.toMatch(/serverExternalPackages/);
+  // The server CAN fetch TikTok covers (verified live), and its covers are HEIC —
+  // unrenderable in any browser <img>. So /api/thumb transcodes HEIC → JPEG via
+  // heic-convert (pure-WASM libheif; sharp can't decode HEVC-in-HEIF), and the
+  // wasm decoder is kept external in next.config so it resolves at runtime.
+  it("transcodes HEIC → JPEG in the proxy (heic-convert, not sharp)", () => {
+    const route = read("src/app/api/thumb/route.ts");
+    expect(route).toContain("heic-convert");
+    expect(route).not.toContain("sharp");
+    expect(route).toMatch(/format:\s*"JPEG"/);
+    expect(read("next.config.ts")).toMatch(/serverExternalPackages/);
+    expect(read("package.json")).toMatch(/"heic-convert"\s*:/);
   });
-  it("keeps the TikTok CDN host allowlisted (Apify/IG/FB proxying still works)", () => {
+  it("keeps the TikTok CDN host allowlisted and routes it through the proxy", () => {
     expect(read("src/lib/thumb-proxy.ts")).toContain(".tiktokcdn-us.com");
   });
 });
