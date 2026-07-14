@@ -17,6 +17,7 @@ import clsx from "clsx";
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   ExternalLink,
   Eye,
   Film,
@@ -28,6 +29,7 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Tag,
   Trash2,
   TrendingUp,
   X,
@@ -243,22 +245,27 @@ function GrowthLeaderCard({ r, rank, onOpen }: { r: VideoRowData; rank: number; 
 type AdminControls = {
   pendingId: string | null;
   onRemove: (id: string) => void;
+  onSetCampaign: (id: string, campaign: "bootcamp" | "mtl" | "unassigned") => void;
 };
 
 /**
- * Remove/restore mutations against the server-enforced admin route. The route
- * (guardAdmin) is the real gate; this hook just drives it + refreshes the RSC
- * tree so the grid, totals, and Removed view update in place.
+ * Admin mutations against the server-enforced admin route (guardAdmin is the
+ * real gate). This hook just drives PATCH /api/admin/videos/[id] and refreshes
+ * the RSC tree so the grid, totals, campaign filters, and Removed view update in
+ * place. Only campaign tags + tracking state are ever touched — no metrics,
+ * snapshots, comments, thumbnails, or provider calls.
  */
 function useTrackingActions() {
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const patch = useCallback(
-    async (id: string, body: Record<string, unknown>, label: string) => {
+    async (id: string, body: Record<string, unknown>, label: string): Promise<boolean> => {
       setPendingId(id);
       setError(null);
+      setNotice(null);
       try {
         const res = await fetch(`/api/admin/videos/${id}`, {
           method: "PATCH",
@@ -270,8 +277,10 @@ function useTrackingActions() {
           throw new Error(j?.error ?? `${label} failed (${res.status})`);
         }
         router.refresh();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : `${label} failed`);
+        return false;
       } finally {
         setPendingId(null);
       }
@@ -294,7 +303,15 @@ function useTrackingActions() {
 
   const restore = useCallback((id: string) => void patch(id, { tracking: "restore" }, "Restore"), [patch]);
 
-  return { pendingId, error, remove, restore };
+  const setCampaign = useCallback(
+    async (id: string, campaign: "bootcamp" | "mtl" | "unassigned") => {
+      const ok = await patch(id, { campaign }, "Campaign update");
+      if (ok) setNotice(campaign === "unassigned" ? "Campaign updated — now Unassigned (hidden from public campaign views)." : "Campaign updated.");
+    },
+    [patch],
+  );
+
+  return { pendingId, error, notice, remove, restore, setCampaign };
 }
 
 /** Non-mutating link to the original public post — shown for every viewer. */
@@ -331,6 +348,68 @@ function RemoveButton({ id, admin }: { id: string; admin: AdminControls }) {
     >
       {busy ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />} Remove
     </button>
+  );
+}
+
+type CampaignChoice = "bootcamp" | "mtl" | "unassigned";
+const CAMPAIGN_OPTIONS: Array<{ value: CampaignChoice; label: string }> = [
+  { value: "bootcamp", label: "Bootcamp" },
+  { value: "mtl", label: "MTL" },
+  { value: "unassigned", label: "Unassigned" },
+];
+const campaignLabel = (c: CampaignChoice) => CAMPAIGN_OPTIONS.find((o) => o.value === c)?.label ?? "Unassigned";
+
+/**
+ * Admin-only campaign reassignment for a single video. Shows the current
+ * assignment + a selector; Apply is enabled only when the choice differs. Writes
+ * through the guardAdmin PATCH (rawJson.campaign only — metrics/snapshots/
+ * comments/thumbnail/tracking untouched). Removed/excluded videos never reach
+ * this control (they're not in the public row set), so it always edits an active
+ * record; guarded anyway.
+ */
+function CampaignEditor({ id, current, admin }: { id: string; current: "bootcamp" | "mtl" | null; admin: AdminControls }) {
+  // Local selection seeds from the server value; the caller remounts this via a
+  // `${id}:${campaign}` key when the assignment changes, so no resync effect is
+  // needed (and none of the setState-in-effect footguns).
+  const currentChoice: CampaignChoice = current ?? "unassigned";
+  const [selected, setSelected] = useState<CampaignChoice>(currentChoice);
+  const busy = admin.pendingId === id;
+  const changed = selected !== currentChoice;
+  return (
+    <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+          <Tag size={11} className="text-muted-strong" /> Campaign
+        </div>
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-strong">
+          now: {campaignLabel(currentChoice)}
+        </span>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <select
+          value={selected}
+          disabled={busy}
+          onChange={(e) => setSelected(e.target.value as CampaignChoice)}
+          aria-label="Assign campaign"
+          className="flex-1 rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-xs text-foreground focus:border-accent focus:outline-none disabled:opacity-50"
+        >
+          {CAMPAIGN_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={busy || !changed}
+          onClick={() => admin.onSetCampaign(id, selected)}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-accent/40 bg-[var(--accent-soft)] px-2.5 py-1.5 text-[11px] font-semibold text-accent transition-colors hover:bg-[var(--accent-soft)] disabled:opacity-40"
+        >
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Apply
+        </button>
+      </div>
+      <p className="mt-1.5 text-[10px] text-muted-strong">
+        Moves this video&apos;s views between campaign totals (All stays the same). Unassigned hides it from public campaign views.
+      </p>
+    </div>
   );
 }
 
@@ -473,13 +552,17 @@ function DetailDrawer({ r, now, onClose, admin }: { r: VideoRowData; now: number
             <StatusBadges r={r} now={now} />
           </div>
 
-          {admin && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-negative/25 bg-[rgba(248,113,113,0.05)] px-3 py-2.5">
-              <div>
-                <div className="text-[11px] font-semibold text-foreground">Admin controls</div>
-                <div className="text-[10px] text-muted-strong">Remove from tracking (soft, reversible)</div>
+          {admin && r.trackingStatus !== "excluded" && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted-strong">Admin controls</div>
+              <CampaignEditor key={`${v.id}:${r.campaign ?? "unassigned"}`} id={v.id} current={r.campaign} admin={admin} />
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-negative/25 bg-[rgba(248,113,113,0.05)] px-3 py-2.5">
+                <div>
+                  <div className="text-[11px] font-semibold text-foreground">Remove from tracking</div>
+                  <div className="text-[10px] text-muted-strong">Soft, reversible — excludes from all totals</div>
+                </div>
+                <RemoveButton id={v.id} admin={admin} />
               </div>
-              <RemoveButton id={v.id} admin={admin} />
             </div>
           )}
 
@@ -560,9 +643,9 @@ export function VideosExplorer({
   // Wall-clock "now" for the New (<48h) badge; relative-time is the point.
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
-  const { pendingId, error: adminError, remove, restore } = useTrackingActions();
+  const { pendingId, error: adminError, notice: adminNotice, remove, restore, setCampaign } = useTrackingActions();
   // Only ever hand cards a live controls object when admin — never in public view.
-  const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove } : null;
+  const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove, onSetCampaign: setCampaign } : null;
   const [platform, setPlatform] = useState<Platform | "all">("all");
   const [episode, setEpisode] = useState<string>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -800,6 +883,16 @@ export function VideosExplorer({
           className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-lg border border-negative/40 bg-surface-raised px-4 py-2 text-xs font-medium text-negative shadow-xl"
         >
           {adminError}
+        </div>
+      )}
+
+      {/* Success toast (e.g. campaign updated) — admin only. */}
+      {isAdmin && !adminError && adminNotice && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-[60] inline-flex -translate-x-1/2 items-center gap-1.5 rounded-lg border border-positive/40 bg-surface-raised px-4 py-2 text-xs font-medium text-positive shadow-xl"
+        >
+          <Check size={13} /> {adminNotice}
         </div>
       )}
 

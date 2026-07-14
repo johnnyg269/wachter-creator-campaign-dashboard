@@ -196,7 +196,7 @@ describe("rendering gates — controls never leak to the public view (source-lev
   const page = read("src/app/videos/page.tsx");
 
   it("remove controls only construct when isAdmin", () => {
-    expect(explorer).toContain("const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove } : null;");
+    expect(explorer).toContain("const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove, onSetCampaign: setCampaign } : null;");
     // Cards receive `admin` (null when public) and only render RemoveButton under it.
     expect(explorer).toContain("{admin && <RemoveButton");
   });

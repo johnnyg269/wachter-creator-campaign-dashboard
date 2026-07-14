@@ -197,7 +197,7 @@ describe("Videos page structure & safety (source-level)", () => {
     const fetchTargets = [...explorer.matchAll(/fetch\(`([^`]+)`/g)].map((m) => m[1]);
     expect(fetchTargets.length).toBe(1);
     expect(fetchTargets[0]).toContain("/api/admin/videos/");
-    expect(explorer).toContain("const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove } : null;");
+    expect(explorer).toContain("const admin: AdminControls | null = isAdmin ? { pendingId, onRemove: remove, onSetCampaign: setCampaign } : null;");
     expect(explorer).toContain("{admin && <RemoveButton");
   });
   it("exposes no actor IDs or vendor names", () => {

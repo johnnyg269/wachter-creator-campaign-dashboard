@@ -847,6 +847,10 @@ export interface VideoAudienceSignal {
 export type VideoRowData = VideoMetrics & {
   episodeName: string | null;
   profileUrl: string | null;
+  /** Current campaign assignment (derived from rawJson.campaign; null = unassigned). */
+  campaign: CampaignSlug | null;
+  /** Tracking state (active / review / excluded). Drawer rows are never excluded. */
+  trackingStatus: TrackingStatus;
   /** Views gained within the selected range (real snapshots; null if sparse). */
   periodGrowth: number | null;
   /** True when history spans the whole selected window. */
@@ -941,6 +945,8 @@ export async function getVideosPageData(
       ...data.metricsByVideo.get(v.id)!,
       episodeName: v.episodeGroupId ? (episodeById.get(v.episodeGroupId) ?? null) : null,
       profileUrl: v.profileId ? (profileById.get(v.profileId) ?? null) : null,
+      campaign: v.campaign,
+      trackingStatus: v.trackingStatus,
       periodGrowth: growth.gained,
       periodCoversFull: growth.coversFull,
       sparkline: viewSparkline(snaps, from),
