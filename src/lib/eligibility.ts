@@ -148,20 +148,56 @@ export type DiscoveryDecision =
 
 const DEFAULT_DISCOVERY_LOOKBACK_MS = 72 * 60 * 60 * 1000;
 
+type DiscoveryText = {
+  title?: string | null;
+  caption?: string | null;
+  rawJson?: unknown;
+};
+
+/** Match post text only, never profile names, URLs, comments, or provider metadata. */
+export function discoveryCampaign(v: DiscoveryText): "mtl" | "bootcamp" | null {
+  const text = [v.title ?? "", v.caption ?? ""];
+  const collect = (raw: unknown, depth = 0): void => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || depth > 3) return;
+    const obj = raw as Record<string, unknown>;
+    for (const key of ["title", "caption", "text", "description"]) {
+      if (typeof obj[key] === "string") text.push(obj[key]);
+    }
+    for (const key of ["hashtags", "mentions"]) {
+      const tags = obj[key];
+      for (const tag of Array.isArray(tags) ? tags : [tags]) {
+        if (typeof tag === "string") text.push(tag);
+        else if (tag && typeof tag === "object") {
+          const fields = tag as Record<string, unknown>;
+          for (const field of ["name", "title", "text", "username", "handle"]) {
+            if (typeof fields[field] === "string") text.push(fields[field]);
+          }
+        }
+      }
+    }
+    // SocialCrawl wraps posts in post.content; actor payloads use these wrappers.
+    for (const key of ["post", "content", "video", "reel", "item", "data"]) collect(obj[key], depth + 1);
+  };
+  collect(v.rawJson);
+  const combined = text.join("\n");
+  if (/boot\s*camp/i.test(combined)) return "bootcamp";
+  return /wachter|@wachterinc/i.test(combined) ? "mtl" : null;
+}
+
 /**
  * Classify a brand-new (not-yet-tracked) candidate returned by a known campaign
  * profile endpoint:
  *  - ignore  → fails base eligibility (invalid/epoch date, before campaign start,
  *              unsupported platform, no canonical URL).
- *  - add     → eligible, has a stable id, AND published within the lookback
- *              window (recent → confidently this campaign's new post).
- *  - review  → eligible but uncertain (no stable id, or older than the lookback
- *              window) → admin "Possible new content", never auto-counted.
+ *  - add     → eligible, has a campaign signal in its text, a stable id, AND
+ *              was published within the lookback window.
+ *  - review  → eligible but uncertain (no campaign signal, no stable id, or
+ *              older than the lookback window), never auto-counted.
  * Dedup against already-tracked videos is the caller's job (only unmatched items
  * should reach here).
  */
 export function classifyDiscoveryCandidate(
-  v: {
+  v: DiscoveryText & {
     platform: Platform;
     originalUrl: string | null;
     externalVideoId: string | null;
@@ -179,6 +215,8 @@ export function classifyDiscoveryCandidate(
     null,
   );
   if (reason) return { decision: "ignore", reason };
+
+  if (!discoveryCampaign(v)) return { decision: "review", reason: "no_campaign_signal" };
 
   // A stable platform id is required to dedupe a future auto-add reliably.
   if (!v.externalVideoId) return { decision: "review", reason: "no_stable_id" };

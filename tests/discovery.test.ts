@@ -6,7 +6,10 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 import { classifyDiscoveryCandidate } from "@/lib/eligibility";
+import { videoCampaign } from "@/lib/campaigns";
+import { PATCH } from "@/app/api/admin/videos/[id]/route";
 import { getRefreshPolicyConfig, decideScheduledRefresh } from "@/lib/refresh-policy";
 import type { NormalizedVideo, Platform, RefreshRun } from "@/lib/types";
 
@@ -17,9 +20,9 @@ describe("classifyDiscoveryCandidate", () => {
   const START = Date.parse("2026-06-08T04:00:00.000Z");
   const NOW = Date.parse("2026-06-16T12:00:00.000Z");
   const LOOKBACK = 72 * 3600_000;
-  const base = (over: Partial<{ platform: Platform; originalUrl: string | null; externalVideoId: string | null; publishedAt: string | null }>) =>
+  const base = (over: Partial<NormalizedVideo>) =>
     classifyDiscoveryCandidate(
-      { platform: "tiktok", originalUrl: "https://www.tiktok.com/@x/video/1", externalVideoId: "1", publishedAt: "2026-06-16T00:00:00.000Z", ...over },
+      { platform: "tiktok", originalUrl: "https://www.tiktok.com/@x/video/1", externalVideoId: "1", publishedAt: "2026-06-16T00:00:00.000Z", caption: "A day at Wachter", ...over },
       { startMs: START, now: NOW, lookbackMs: LOOKBACK },
     );
 
@@ -41,6 +44,23 @@ describe("classifyDiscoveryCandidate", () => {
   });
   it("REVIEWS an eligible candidate with no stable platform id", () => {
     expect(base({ externalVideoId: null })).toEqual({ decision: "review", reason: "no_stable_id" });
+  });
+  it.each([
+    { title: "WACHTER training", caption: null },
+    { caption: "#bootcamp" },
+    { caption: "Boot Camp day one" },
+    { caption: "Thanks @WachterInc!" },
+    { caption: null, rawJson: { hashtags: [{ name: "Wachter" }] } },
+    { caption: null, rawJson: { post: { content: { mentions: [{ username: "wachterinc" }] } } } },
+  ])("auto-adds a campaign signal in post text: %j", (over) => {
+    expect(base(over)).toEqual({ decision: "add" });
+  });
+  it.each([
+    { caption: "I LOVE Red Bulls..." },
+    { title: null, caption: null },
+    { caption: "Unrelated post", rawJson: { campaign: "mtl", author: { username: "wachterinc" }, url: "https://wachter.com", comments: [{ text: "Wachter" }] } },
+  ])("reviews an eligible post without a campaign signal: %j", (over) => {
+    expect(base(over)).toEqual({ decision: "review", reason: "no_campaign_signal" });
   });
 });
 
@@ -103,7 +123,7 @@ import { runRefresh } from "@/lib/refresh";
 import { ensureSeedData } from "@/lib/seed";
 import { getDashboardData } from "@/lib/queries";
 import { getStore } from "@/lib/store";
-import { useTmpCwd, type TmpCwd } from "./helpers";
+import { stashEnv, useTmpCwd, type TmpCwd } from "./helpers";
 
 const ttUrl = (id: string) => `https://www.tiktok.com/@cybernick0x/video/${id}`;
 const nv = (id: string, over: Partial<NormalizedVideo> = {}): NormalizedVideo => ({
@@ -115,16 +135,20 @@ const nv = (id: string, over: Partial<NormalizedVideo> = {}): NormalizedVideo =>
 
 describe("discovery pipeline (integration)", () => {
   let tmp: TmpCwd;
+  let restore: () => void;
   const reset = () => ((globalThis as unknown as { __wachterStore?: unknown }).__wachterStore = undefined);
   beforeEach(async () => {
     tmp = await useTmpCwd();
     reset();
     ctrl.tiktok = null;
+    restore = stashEnv(["CAMPAIGN_START_DATE_ET", "BOOTCAMP_START_DATE", "ADMIN_PASSWORD"]);
     process.env.CAMPAIGN_START_DATE_ET = "2020-01-01"; // decouple from real run date
+    process.env.BOOTCAMP_START_DATE = "2020-01-01";
+    delete process.env.ADMIN_PASSWORD;
   });
   afterEach(async () => {
     reset();
-    delete process.env.CAMPAIGN_START_DATE_ET;
+    restore();
     (globalThis as unknown as { __wachterRefreshing?: unknown }).__wachterRefreshing = undefined;
     await tmp.cleanup();
   });
@@ -148,8 +172,10 @@ describe("discovery pipeline (integration)", () => {
     ctrl.tiktok = async () => ({
       videos: [
         nv("TRACK", { publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 1234 }), // existing tracked → metrics update
-        nv("NEW_RECENT", { publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 5000 }), // ≤72h → add
-        nv("OLD_AFTER", { publishedAt: new Date(Date.now() - 12 * 86400_000).toISOString(), views: 9000 }), // >72h after 2020 → review
+        nv("NEW_RECENT", { caption: "Working with @WachterInc #Wachter", publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 5000 }), // ≤72h + signal → MTL
+        nv("BOOTCAMP", { title: "Wachter BOOT CAMP", publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 2000 }),
+        nv("UNRELATED", { caption: "I LOVE Red Bulls...", publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 50000, rawJson: { source: "socialcrawl", campaign: "mtl" } }),
+        nv("OLD_AFTER", { caption: "Wachter", publishedAt: new Date(Date.now() - 12 * 86400_000).toISOString(), views: 9000 }), // >72h after 2020 → review
         nv("PRE_START", { publishedAt: "2019-06-01T00:00:00.000Z", views: 9999 }), // before start → ignore
         nv("EPOCH", { publishedAt: "1970-01-21T00:00:00.000Z", views: 8888 }), // invalid → ignore
       ],
@@ -161,17 +187,80 @@ describe("discovery pipeline (integration)", () => {
     const byExt = (e: string) => all.find((v) => v.externalVideoId === e);
     // recent auto-added (active, visible); old → review (hidden + flagged); pre-start/epoch never created.
     expect(byExt("NEW_RECENT")?.hidden).toBe(false);
+    expect(byExt("NEW_RECENT")?.rawJson).toMatchObject({ campaign: "mtl" });
+    expect(byExt("BOOTCAMP")?.hidden).toBe(false);
+    expect(byExt("BOOTCAMP")?.rawJson).toMatchObject({ campaign: "bootcamp" });
+    const unrelated = byExt("UNRELATED");
+    expect(unrelated?.hidden).toBe(true);
+    expect(unrelated?.rawJson).toMatchObject({ campaign: "unassigned", discoveryReview: true, discoveryReviewReason: "no_campaign_signal" });
+    expect(videoCampaign(unrelated!)).toBeNull();
+    expect(await store.listSnapshots(unrelated!.id)).toHaveLength(0);
     const old = byExt("OLD_AFTER");
     expect(old?.hidden).toBe(true);
-    expect((old?.rawJson as { discoveryReview?: boolean } | null)?.discoveryReview).toBe(true);
+    expect(old?.rawJson).toMatchObject({ campaign: "unassigned", discoveryReview: true, discoveryReviewReason: "older_than_discovery_window" });
     expect(byExt("PRE_START")).toBeUndefined();
     expect(byExt("EPOCH")).toBeUndefined();
-    // exactly 2 new rows (recent + review); TRACK was deduped (updated, not re-added).
-    expect(all.length).toBe(before + 2);
+    // Four new rows; TRACK was deduped (updated, not re-added).
+    expect(all.length).toBe(before + 4);
 
-    // Totals count the tracked + the auto-added recent, NOT the review candidate.
+    // Legacy untagged TRACK still defaults to MTL; review candidates never count.
+    expect(videoCampaign(byExt("TRACK")!)).toBe("mtl");
     const dash = await getDashboardData("all");
-    expect(dash.kpis.totalViews).toBe(1234 + 5000);
+    expect(dash.kpis.totalViews).toBe(1234 + 5000 + 2000);
+    expect((await getDashboardData("all", "mtl")).kpis.totalViews).toBe(1234 + 5000);
+    expect((await getDashboardData("all", "bootcamp")).kpis.totalViews).toBe(2000);
+  });
+
+  it("keeps unrelated review candidates queued on later refreshes and tags a newly qualifying heal", async () => {
+    const store = await seedTracked();
+    let caption = "I LOVE Red Bulls...";
+    ctrl.tiktok = async () => ({
+      videos: [nv("REVIEW", { caption, publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(), views: 5000 })],
+      commentsByVideo: {}, attempts: [],
+    });
+    await runRefresh("script");
+    await runRefresh("script");
+    const queued = (await store.listVideos({ includeHidden: true })).find((v) => v.externalVideoId === "REVIEW")!;
+    expect(queued.hidden).toBe(true);
+    expect(queued.rawJson).toMatchObject({ campaign: "unassigned", discoveryReview: true, discoveryReviewReason: "no_campaign_signal" });
+    expect(await store.listSnapshots(queued.id)).toHaveLength(0);
+
+    caption = "Wachter #bootcamp";
+    await runRefresh("script");
+    const healed = (await store.getVideo(queued.id))!;
+    expect(healed.hidden).toBe(false);
+    expect(healed.rawJson).toMatchObject({ campaign: "bootcamp" });
+    expect(healed.rawJson).not.toHaveProperty("discoveryReview");
+    expect((await getDashboardData("all", "bootcamp")).kpis.totalViews).toBe(5000);
+  });
+
+  it.each([
+    { caption: "I LOVE Red Bulls...", campaign: "mtl", explicit: undefined },
+    { caption: "Wachter bootcamp", campaign: "bootcamp", explicit: undefined },
+    { caption: "Wachter", campaign: "bootcamp", explicit: "bootcamp" },
+  ])("admin promotion assigns an explicit campaign: %j", async ({ caption, campaign, explicit }) => {
+    const store = await seedTracked();
+    ctrl.tiktok = async () => ({
+      videos: [nv("PROMOTE", { caption, publishedAt: new Date(Date.now() - 12 * 86400_000).toISOString() })],
+      commentsByVideo: {}, attempts: [],
+    });
+    await runRefresh("script");
+    const queued = (await store.listVideos({ includeHidden: true })).find((v) => v.externalVideoId === "PROMOTE")!;
+    expect(queued.rawJson).toMatchObject({ campaign: "unassigned", discoveryReview: true });
+    const res = await PATCH(new NextRequest(`http://localhost/api/admin/videos/${queued.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review: "promote", ...(explicit ? { campaign: explicit } : {}) }),
+    }), { params: Promise.resolve({ id: queued.id }) });
+    expect(res.status).toBe(200);
+    const promoted = (await store.getVideo(queued.id))!;
+    expect(promoted.hidden).toBe(false);
+    expect(promoted.rawJson).toMatchObject({ campaign });
+    expect(promoted.rawJson).not.toHaveProperty("discoveryReview");
+    expect(promoted.rawJson).not.toHaveProperty("discoveryReviewReason");
+    // The next provider refresh preserves the admin approval and starts counting.
+    await runRefresh("script");
+    expect((await getDashboardData("all", campaign as "mtl" | "bootcamp")).kpis.totalViews).toBe(1000);
   });
 
   it("metrics-only refresh never imports unmatched candidates", async () => {

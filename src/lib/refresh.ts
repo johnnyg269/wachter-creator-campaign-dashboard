@@ -23,6 +23,7 @@ import { isLikelyVideoItem, mergeNormalizedVideos, metricCompleteness } from "./
 import {
   campaignStartMs,
   classifyDiscoveryCandidate,
+  discoveryCampaign,
   eligibilityFloorForCampaign,
   isCampaignEligible,
   isReviewCandidate,
@@ -669,8 +670,9 @@ async function refreshPlatform(
     // METRICS lane (always): a provider profile sweep returns the creator's
     // WHOLE recent feed; we update metrics ONLY for already-tracked, eligible
     // videos. DISCOVERY lane (mode.discovery): unmatched items from the known
-    // campaign profile are classified — recent eligible posts are AUTO-ADDED,
-    // after-start-but-uncertain posts go to the admin review queue, and
+    // campaign profile are classified — recent eligible posts with campaign
+    // text signals are AUTO-ADDED; after-start-but-uncertain posts go to the
+    // admin review queue, and
     // old/invalid/pre-campaign posts are ignored. Without discovery, unmatched
     // items are simply ignored (never the over-import that corrupted totals).
     const eligibleTrackedIds = new Set(videos.map((v) => v.id));
@@ -724,9 +726,9 @@ async function refreshPlatform(
               // re-add it via discovery; only an admin Restore brings it back.
               false
             : isReviewCandidate(existing)
-              ? // a review candidate only auto-promotes once it clearly qualifies for auto-add (<=72h)
+              ? // a review candidate only auto-promotes with a campaign signal and recent date
                 classifyDiscoveryCandidate(
-                  { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
+                  { ...n, platform },
                   { startMs, lookbackMs, now: nowMs },
                 ).decision === "add"
               : // any other excluded record heals on a valid eligible provider date
@@ -752,7 +754,7 @@ async function refreshPlatform(
       if (key && seenNew.has(key)) continue;
       if (key) seenNew.add(key);
       const cls = classifyDiscoveryCandidate(
-        { platform, originalUrl: n.originalUrl, externalVideoId: n.externalVideoId, publishedAt: n.publishedAt },
+        { ...n, platform },
         { startMs, lookbackMs, now: nowMs },
       );
       if (cls.decision === "ignore") {
@@ -1135,10 +1137,11 @@ async function healExistingVideo(store: Store, existing: Video, n: NormalizedVid
   const rawObj = n.rawJson && typeof n.rawJson === "object" ? { ...(n.rawJson as Record<string, unknown>) } : {};
   delete rawObj.discoveryReview;
   delete rawObj.discoveryReviewReason;
-  // Preserve the campaign tag across the heal (the provider payload doesn't carry
-  // it). Tracking is intentionally cleared here — this path deliberately un-excludes.
+  // A newly qualified review candidate gets a text-derived campaign tag; otherwise
+  // preserve its existing tag. Tracking is cleared by this deliberate heal.
   const exRaw = existing.rawJson && typeof existing.rawJson === "object" ? (existing.rawJson as Record<string, unknown>) : {};
-  if ("campaign" in exRaw) rawObj.campaign = exRaw.campaign;
+  if (isReviewCandidate(existing)) rawObj.campaign = discoveryCampaign(n) ?? "unassigned";
+  else if ("campaign" in exRaw) rawObj.campaign = exRaw.campaign;
   // Route the thumbnail through the SAME state machine every other write uses so
   // a heal can never overwrite a good/last-known-good cover with a null (provider
   // returned none this heal) and never drops the thumb retry state — the previous
@@ -1191,8 +1194,8 @@ async function insertDiscoveredVideo(
     verifiable: !isTikTokCdnHost(n.thumbnailUrl),
   });
   const baseRaw = review
-    ? { ...rawObj, discoveryReview: true, discoveryReviewReason: reviewReason ?? "review" }
-    : (n.rawJson ?? null);
+    ? { ...rawObj, campaign: "unassigned", discoveryReview: true, discoveryReviewReason: reviewReason ?? "review" }
+    : { ...rawObj, campaign: discoveryCampaign(n) ?? "unassigned" };
   return store.insertVideo({
     campaignId: campaign.id,
     platform,

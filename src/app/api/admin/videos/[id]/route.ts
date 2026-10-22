@@ -5,7 +5,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getStore } from "@/lib/store";
 import type { Video, VideoStatus } from "@/lib/types";
-import { isReviewCandidate } from "@/lib/eligibility";
+import { discoveryCampaign, isReviewCandidate } from "@/lib/eligibility";
 import { mergeThumbIntoRaw } from "@/lib/thumbnail-state";
 import {
   campaignAssignmentPatch,
@@ -114,6 +114,13 @@ export async function PATCH(
           : {};
       delete rawObj.discoveryReview;
       delete rawObj.discoveryReviewReason;
+      if (action === "promote" && !("campaign" in body) && rawObj.campaign !== "mtl" && rawObj.campaign !== "bootcamp") {
+        // Approval assigns an explicit campaign; legacy/no-signal approvals retain
+        // the existing MTL behavior. An explicit body.campaign below takes priority.
+        const campaign = discoveryCampaign(video) ?? "mtl";
+        rawObj.campaign = campaign;
+        changes.push({ field: "campaign", oldValue: videoCampaign(video) ?? "unassigned", newValue: campaign });
+      }
       patch.rawJson = rawObj as Video["rawJson"];
       patch.hidden = action === "promote" ? false : true;
       changes.push({
