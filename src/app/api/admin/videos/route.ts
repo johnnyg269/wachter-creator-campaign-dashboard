@@ -1,13 +1,14 @@
 // POST /api/admin/videos { url, episodeGroupId? } → detect the platform from
-// the URL and start tracking the video (manual provider metadata until the
-// next refresh fills it in).
+// the URL and start tracking the video. YouTube metadata is fetched on add so
+// a missing publish date cannot prevent the next refresh from selecting it.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getStore } from "@/lib/store";
 import { ensureSeedData } from "@/lib/seed";
 import { resolveProvider } from "@/lib/providers/registry";
+import { YouTubeApiProvider } from "@/lib/providers/youtube-api-provider";
 import { parseVideoUrl, tiktokPublishedAtFromId } from "@/lib/url-parse";
-import type { Video } from "@/lib/types";
+import type { NormalizedVideo, Video } from "@/lib/types";
 import {
   eligibilityFloorForCampaign,
   ineligibilityReason,
@@ -18,6 +19,7 @@ import {
 import { campaignTag } from "@/lib/campaigns";
 import {
   asTrimmedString,
+  asIsoDate,
   badRequest,
   guardAdmin,
   readJsonObject,
@@ -133,6 +135,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const profiles = await store.listProfiles();
     const profile = profiles.find((p) => p.platform === parsed.platform) ?? null;
+    let youtubeMetadata: NormalizedVideo | null = null;
+    if (parsed.platform === "youtube") {
+      const provider = new YouTubeApiProvider();
+      if (!provider.readiness().ready) {
+        return NextResponse.json({ ok: false, error: "YOUTUBE_API_KEY is required to add YouTube videos" }, { status: 503 });
+      }
+      try {
+        youtubeMetadata = await provider.getVideoMetadata(parsed.canonicalUrl);
+      } catch {
+        // Network errors may contain the request URL (and API key).
+        return NextResponse.json({ ok: false, error: "YouTube API lookup failed; retry adding the video" }, { status: 502 });
+      }
+      const publishedAt = asIsoDate(youtubeMetadata?.publishedAt);
+      if (!youtubeMetadata || !publishedAt) {
+        return NextResponse.json({ ok: false, error: "YouTube API did not return a valid publish date" }, { status: 502 });
+      }
+      youtubeMetadata.publishedAt = publishedAt;
+    }
     const { readiness } = await resolveProvider(parsed.platform, store);
 
     const video = await store.insertVideo({
@@ -141,13 +161,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       profileId: profile?.id ?? null,
       originalUrl: parsed.canonicalUrl,
       externalVideoId: parsed.externalVideoId,
-      title: null,
-      caption: null,
-      thumbnailUrl: null,
+      title: youtubeMetadata?.title ?? null,
+      caption: youtubeMetadata?.caption ?? null,
+      thumbnailUrl: youtubeMetadata?.thumbnailUrl ?? null,
       publishedAt:
         parsed.platform === "tiktok" && parsed.externalVideoId
           ? tiktokPublishedAtFromId(parsed.externalVideoId)
-          : null,
+          : youtubeMetadata?.publishedAt ?? null,
       firstTrackedAt: new Date().toISOString(),
       lastRefreshedAt: null,
       status: "active",

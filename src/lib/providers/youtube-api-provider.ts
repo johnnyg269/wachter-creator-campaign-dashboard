@@ -91,7 +91,8 @@ export class YouTubeApiProvider implements SocialPlatformProvider {
     };
   }
 
-  private async fetchVideosByIds(ids: string[]): Promise<NormalizedVideo[]> {
+  /** Fetch metadata for one batch of up to 50 IDs through the official API. */
+  async fetchVideosByIds(ids: string[]): Promise<NormalizedVideo[]> {
     if (ids.length === 0) return [];
     const data = await this.yt("videos", {
       part: "snippet,statistics",
