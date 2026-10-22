@@ -8,6 +8,11 @@ import type { Video } from "./types";
 
 export type ChartRange = "24h" | "7d" | "30d" | "all";
 
+/** Homepage defaults to all time; explicit URL selections always win. */
+export function parseHomepageRange(value: string | string[] | undefined): ChartRange {
+  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "all";
+}
+
 export const RANGE_MS: Record<Exclude<ChartRange, "all">, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,

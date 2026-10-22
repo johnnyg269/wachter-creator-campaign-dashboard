@@ -46,7 +46,7 @@ import { MomentumCard } from "@/components/dashboard/momentum-card";
 import { CommentIntelCard } from "@/components/dashboard/comment-intel-card";
 import { AlertsPreview } from "@/components/dashboard/alerts-preview";
 import { DataStatusDrawer } from "@/components/dashboard/data-status";
-import { coverageNote, historyBeganNote } from "@/lib/range";
+import { coverageNote, historyBeganNote, parseHomepageRange } from "@/lib/range";
 
 export const dynamic = "force-dynamic";
 
@@ -63,12 +63,6 @@ const PLATFORM_HEX: Record<Platform, string> = {
   instagram: "#e95daa",
   facebook: "#4b8dff",
 };
-
-function parseRange(value: string | string[] | undefined): TimeRange {
-  // Homepage default is 30d (fuller campaign view on first land); an explicit
-  // ?range= always wins, so a user's selection is never overridden.
-  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "30d";
-}
 
 /** Per-platform share of view growth across the selected range. */
 function growthShares(
@@ -112,7 +106,7 @@ export default async function DashboardPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const range = parseRange(sp.range);
+  const range = parseHomepageRange(sp.range);
   const campaign = parsePublicCampaignFilter(sp.campaign);
   const data = await getDashboardData(range, campaign);
   const { health, kpis, momentum, commentStats } = data;
